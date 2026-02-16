@@ -301,6 +301,35 @@ class AudioFeatureExtractor:
         else:
             plt.show()
     
+    def plot_tempogram(self, figsize=(14, 8), output_path=None):
+        """
+        Plot tempogram (tempo/rhythm information).
+        
+        Parameters:
+        -----------
+        figsize : tuple
+            Figure size
+        output_path : str, optional
+            Path to save the figure
+        """
+        tempogram = self.get_tempogram()
+        
+        plt.figure(figsize=figsize)
+        img = librosa.display.specshow(tempogram, sr=self.sr, x_axis='time',
+                                       y_axis='tempo', cmap='viridis')
+        plt.colorbar(img, label='Strength')
+        plt.title('Tempogram (Rhythm/Tempo)')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Tempo (BPM)')
+        plt.tight_layout()
+        
+        if output_path:
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            print(f"Saved tempogram to: {output_path}")
+            plt.close()
+        else:
+            plt.show()
+    
     def plot_spectral_features(self, figsize=(14, 8), output_path=None):
         """
         Plot spectral features (centroid, rolloff, ZCR).
@@ -378,6 +407,7 @@ class AudioFeatureExtractor:
             ('mel_spectrogram', self.plot_mel_spectrogram, {}),
             ('mfcc', self.plot_mfcc, {}),
             ('chroma', self.plot_chroma, {}),
+            ('tempogram', self.plot_tempogram, {}),
             ('spectral_features', self.plot_spectral_features, {}),
         ]
         
