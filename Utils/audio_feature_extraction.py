@@ -156,6 +156,83 @@ class AudioFeatureExtractor:
                                                 hop_length=hop_length)[0]
         return zcr
     
+    def get_rms_energy(self, frame_length=2048, hop_length=512):
+        """
+        Extract RMS (Root Mean Square) energy - measures loudness/amplitude.
+        
+        Returns:
+        --------
+        np.ndarray
+            RMS energy values
+        """
+        rms = librosa.feature.rms(y=self.y, frame_length=frame_length,
+                                 hop_length=hop_length)[0]
+        return rms
+    
+    def get_pitch(self, fmin=80, fmax=400, hop_length=512):
+        """
+        Extract fundamental frequency (pitch/F0) using YIN algorithm.
+        
+        Parameters:
+        -----------
+        fmin : int
+            Minimum frequency to consider (Hz)
+        fmax : int
+            Maximum frequency to consider (Hz)
+        hop_length : int
+            Number of samples between frames
+            
+        Returns:
+        --------
+        np.ndarray
+            Fundamental frequency values (0 if unvoiced)
+        """
+        f0 = librosa.yin(self.y, fmin=fmin, fmax=fmax, hop_length=hop_length)
+        return f0
+    
+    def get_onset_strength(self, hop_length=512):
+        """
+        Extract onset strength - detects attack points in the signal.
+        
+        Returns:
+        --------
+        np.ndarray
+            Onset strength values
+        """
+        onset_env = librosa.onset.onset_strength(y=self.y, sr=self.sr,
+                                                hop_length=hop_length)
+        return onset_env
+    
+    def get_spectral_contrast(self, n_fft=2048, hop_length=512):
+        """
+        Extract spectral contrast - distinguishes peaks vs valleys in spectrum.
+        
+        Returns:
+        --------
+        np.ndarray
+            Spectral contrast values (one value per band per frame)
+        """
+        contrast = librosa.feature.spectral_contrast(y=self.y, sr=self.sr,
+                                                     n_fft=n_fft, hop_length=hop_length)
+        return contrast
+    
+    def get_harmonic_percussive(self, margin=2.0):
+        """
+        Separate harmonic and percussive components from audio.
+        
+        Parameters:
+        -----------
+        margin : float
+            Margin for HPSS algorithm
+            
+        Returns:
+        --------
+        tuple
+            (harmonic_component, percussive_component)
+        """
+        harmonic, percussive = librosa.effects.hpss(self.y, margin=margin)
+        return harmonic, percussive
+    
     def plot_waveform(self, figsize=(14, 4), output_path=None):
         """
         Plot raw audio waveform.
@@ -330,6 +407,194 @@ class AudioFeatureExtractor:
         else:
             plt.show()
     
+    def plot_rms_energy(self, figsize=(14, 8), output_path=None):
+        """
+        Plot RMS energy (loudness/amplitude envelope).
+        
+        Parameters:
+        -----------
+        figsize : tuple
+            Figure size
+        output_path : str, optional
+            Path to save the figure
+        """
+        hop_length = 512
+        rms = self.get_rms_energy(hop_length=hop_length)
+        S_db = self.get_mel_spectrogram()
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        img = librosa.display.specshow(S_db, sr=self.sr, x_axis='time',
+                                       y_axis='mel', cmap='magma', ax=ax)
+        plt.colorbar(img, ax=ax, format='%+2.0f dB')
+        
+        # Plot RMS energy
+        ax.plot(librosa.frames_to_time(np.arange(len(rms)), sr=self.sr),
+               rms, label='RMS Energy', color='red', linewidth=2)
+        
+        ax.set_title('Mel-Spectrogram with RMS Energy Envelope')
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel('Frequency (Hz)')
+        ax.legend(loc='upper right')
+        
+        plt.tight_layout()
+        
+        if output_path:
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            print(f"Saved RMS energy to: {output_path}")
+            plt.close()
+        else:
+            plt.show()
+    
+    def plot_pitch(self, figsize=(14, 6), output_path=None):
+        """
+        Plot fundamental frequency/pitch contour.
+        
+        Parameters:
+        -----------
+        figsize : tuple
+            Figure size
+        output_path : str, optional
+            Path to save the figure
+        """
+        f0 = self.get_pitch()
+        
+        plt.figure(figsize=figsize)
+        times = librosa.frames_to_time(np.arange(len(f0)), sr=self.sr, hop_length=512)
+        
+        # Plot pitch (mask out 0 values which indicate unvoiced)
+        voiced = f0 > 0
+        plt.scatter(times[voiced], f0[voiced], alpha=0.6, s=10, color='blue', label='Voiced Pitch')
+        plt.plot(times[voiced], f0[voiced], alpha=0.3, color='blue', linewidth=1)
+        
+        plt.title('Fundamental Frequency (Pitch/F0) Contour')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Frequency (Hz)')
+        plt.grid(True, alpha=0.3)
+        plt.ylim([50, 450])
+        plt.legend()
+        plt.tight_layout()
+        
+        if output_path:
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            print(f"Saved pitch contour to: {output_path}")
+            plt.close()
+        else:
+            plt.show()
+    
+    def plot_onset_strength(self, figsize=(14, 8), output_path=None):
+        """
+        Plot onset strength (attack/pronunciation detection).
+        
+        Parameters:
+        -----------
+        figsize : tuple
+            Figure size
+        output_path : str, optional
+            Path to save the figure
+        """
+        hop_length = 512
+        onset = self.get_onset_strength(hop_length=hop_length)
+        S_db = self.get_mel_spectrogram()
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        img = librosa.display.specshow(S_db, sr=self.sr, x_axis='time',
+                                       y_axis='mel', cmap='magma', ax=ax)
+        plt.colorbar(img, ax=ax, format='%+2.0f dB')
+        
+        # Plot onset strength
+        ax2 = ax.twinx()
+        ax2.plot(librosa.frames_to_time(np.arange(len(onset)), sr=self.sr),
+                onset, label='Onset Strength', color='cyan', linewidth=2)
+        ax2.set_ylabel('Onset Strength')
+        
+        ax.set_title('Mel-Spectrogram with Onset Strength')
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel('Frequency (Hz)')
+        ax2.legend(loc='upper right')
+        
+        plt.tight_layout()
+        
+        if output_path:
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            print(f"Saved onset strength to: {output_path}")
+            plt.close()
+        else:
+            plt.show()
+    
+    def plot_spectral_contrast(self, figsize=(14, 8), output_path=None):
+        """
+        Plot spectral contrast (peaks vs valleys in spectrum).
+        
+        Parameters:
+        -----------
+        figsize : tuple
+            Figure size
+        output_path : str, optional
+            Path to save the figure
+        """
+        contrast = self.get_spectral_contrast()
+        
+        plt.figure(figsize=figsize)
+        img = librosa.display.specshow(contrast, sr=self.sr, x_axis='time',
+                                       y_axis='linear', cmap='viridis')
+        plt.colorbar(img, format='%+2.0f dB')
+        plt.title('Spectral Contrast (Peaks vs Valleys)')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Frequency Band')
+        plt.tight_layout()
+        
+        if output_path:
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            print(f"Saved spectral contrast to: {output_path}")
+            plt.close()
+        else:
+            plt.show()
+    
+    def plot_harmonic_percussive(self, figsize=(14, 10), output_path=None):
+        """
+        Plot harmonic and percussive separation.
+        
+        Parameters:
+        -----------
+        figsize : tuple
+            Figure size
+        output_path : str, optional
+            Path to save the figure
+        """
+        harmonic, percussive = self.get_harmonic_percussive()
+        
+        # Compute spectrograms for visualization
+        S_harmonic = np.abs(librosa.stft(harmonic))
+        S_percussive = np.abs(librosa.stft(percussive))
+        S_h_db = librosa.amplitude_to_db(S_harmonic, ref=np.max)
+        S_p_db = librosa.amplitude_to_db(S_percussive, ref=np.max)
+        
+        fig, axes = plt.subplots(2, 1, figsize=figsize)
+        
+        # Harmonic
+        img1 = librosa.display.specshow(S_h_db, sr=self.sr, x_axis='time',
+                                        y_axis='log', cmap='magma', ax=axes[0])
+        fig.colorbar(img1, ax=axes[0], format='%+2.0f dB')
+        axes[0].set_title('Harmonic Component (Vocal Harmonics)')
+        axes[0].set_ylabel('Frequency (Hz)')
+        
+        # Percussive
+        img2 = librosa.display.specshow(S_p_db, sr=self.sr, x_axis='time',
+                                        y_axis='log', cmap='magma', ax=axes[1])
+        fig.colorbar(img2, ax=axes[1], format='%+2.0f dB')
+        axes[1].set_title('Percussive Component (Noise/Consonants)')
+        axes[1].set_xlabel('Time (s)')
+        axes[1].set_ylabel('Frequency (Hz)')
+        
+        plt.tight_layout()
+        
+        if output_path:
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            print(f"Saved harmonic/percussive separation to: {output_path}")
+            plt.close()
+        else:
+            plt.show()
+    
     def plot_spectral_features(self, figsize=(14, 8), output_path=None):
         """
         Plot spectral features (centroid, rolloff, ZCR).
@@ -408,6 +673,11 @@ class AudioFeatureExtractor:
             ('mfcc', self.plot_mfcc, {}),
             ('chroma', self.plot_chroma, {}),
             ('tempogram', self.plot_tempogram, {}),
+            ('rms_energy', self.plot_rms_energy, {}),
+            ('pitch', self.plot_pitch, {}),
+            ('onset_strength', self.plot_onset_strength, {}),
+            ('spectral_contrast', self.plot_spectral_contrast, {}),
+            ('harmonic_percussive', self.plot_harmonic_percussive, {}),
             ('spectral_features', self.plot_spectral_features, {}),
         ]
         
@@ -442,6 +712,11 @@ class AudioFeatureExtractor:
             'spectral_rolloff': self.get_spectral_rolloff(),
             'zero_crossing_rate': self.get_zero_crossing_rate(),
             'tempogram': self.get_tempogram(),
+            'rms_energy': self.get_rms_energy(),
+            'pitch': self.get_pitch(),
+            'onset_strength': self.get_onset_strength(),
+            'spectral_contrast': self.get_spectral_contrast(),
+            'harmonic_percussive': self.get_harmonic_percussive(),
         }
         return features
 
