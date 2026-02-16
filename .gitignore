@@ -4,3 +4,4 @@
 /.vscode
 /Utils/__pycache__
 /Utils/rolling_clips
+/Utils/rolling_clips_features
