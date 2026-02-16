@@ -1,0 +1,252 @@
+================================================================================
+AUDIO FEATURE IMPORTANCE RANKING FOR VOCAL BOX/VOCAL TRACT ANALYSIS
+================================================================================
+
+Score Range: 1-10 (10 = Most Important, 1 = Least Important)
+
+================================================================================
+TIER 1: CRITICAL FEATURES (9-10/10)
+================================================================================
+
+1. PITCH/F0 CONTOUR
+   ├─ Importance: 10/10 ⭐⭐⭐⭐⭐
+   ├─ Why Critical:
+   │  • Directly measures vocal fold vibration frequency
+   │  • Fundamental indicator of voice production
+   │  • Essential for speaker identification
+   │  • Shows pitch variations in speech
+   │  • Required for voice quality assessment
+   ├─ Use Case: Primary feature for vocal tract analysis
+   └─ Visualization: Frequency contour over time with voiced/unvoiced segments
+
+2. MEL-SPECTROGRAM
+   ├─ Importance: 10/10 ⭐⭐⭐⭐⭐
+   ├─ Why Critical:
+   │  • Shows frequency content in perceptual (human hearing) space
+   │  • Captures vocal formants (resonance patterns)
+   │  • Formants define vocal tract shape and vowel quality
+   │  • Most widely used in speech/voice processing
+   │  • Best for visualizing vowels vs consonants
+   ├─ Use Case: Primary visualization for vocal characteristics
+   └─ Visualization: Time-frequency heatmap scaled to mel-scale
+
+
+================================================================================
+TIER 2: VERY IMPORTANT FEATURES (8-9/10)
+================================================================================
+
+3. MFCC (Mel-Frequency Cepstral Coefficients)
+   ├─ Importance: 9/10 ⭐⭐⭐⭐⭐
+   ├─ Why Very Important:
+   │  • Represents vocal tract shape/filtering
+   │  • Cepstral coefficients isolate formant structure
+   │  • Widely used in speech recognition
+   │  • Captures spectral envelope information
+   │  • Good for voice characteristic extraction
+   ├─ Use Case: Feature extraction for machine learning models
+   └─ Visualization: 13 cepstral coefficients over time
+
+4. HARMONIC/PERCUSSIVE SEPARATION (H/P)
+   ├─ Importance: 9/10 ⭐⭐⭐⭐⭐
+   ├─ Why Very Important:
+   │  • Separates vocal harmonics (vowels) from noise (consonants)
+   │  • Reveals voice clean/clarity levels
+   │  • Shows vocal quality (noisy vs clear)
+   │  • Essential for vowel vs consonant distinction
+   │  • Indicates presence of vocal pathologies or breathiness
+   ├─ Use Case: Voice quality and articulation analysis
+   └─ Visualization: Dual spectrograms showing harmonic & percussive components
+
+
+================================================================================
+TIER 3: IMPORTANT FEATURES (7-8/10)
+================================================================================
+
+5. WAVEFORM
+   ├─ Importance: 8/10 ⭐⭐⭐⭐
+   ├─ Why Important:
+   │  • Shows raw signal amplitude over time
+   │  • Visualizes overall vocal production dynamics
+   │  • Helps understand signal characteristics
+   │  • Basic for any audio analysis
+   ├─ Use Case: Initial signal inspection and overview
+   └─ Visualization: Raw amplitude time-series
+
+6. RMS ENERGY (Root Mean Square)
+   ├─ Importance: 8/10 ⭐⭐⭐⭐
+   ├─ Why Important:
+   │  • Represents loudness/intensity envelope
+   │  • Shows vocal production dynamics
+   │  • Captures voice intensity variations
+   │  • Good for detecting vocal effort
+   │  • Overlaid on mel-spectrogram for visual reference
+   ├─ Use Case: Amplitude dynamics and vocal effort analysis
+   └─ Visualization: Energy envelope overlaid on spectrogram
+
+7. SPECTROGRAM (Linear Scale)
+   ├─ Importance: 8/10 ⭐⭐⭐⭐
+   ├─ Why Important:
+   │  • Shows frequency content in physics/scientific scale
+   │  • Captures high-frequency details better than mel-scale
+   │  • Useful for detailed spectral analysis
+   │  • Traditional approach in signal processing
+   ├─ Use Case: Detailed frequency analysis and formant tracking
+   └─ Visualization: Time-frequency heatmap with linear frequency axis
+
+8. SPECTRAL CONTRAST
+   ├─ Importance: 7/10 ⭐⭐⭐⭐
+   ├─ Why Important:
+   │  • Measures peaks vs valleys in spectrum
+   │  • Indicates voice clarity and definition
+   │  • Shows spectral sharpness
+   │  • Useful for voice quality assessment
+   │  • Helps detect voice strain or hoarseness
+   ├─ Use Case: Voice quality and vocal clarity assessment
+   └─ Visualization: Spectral contrast bands over time
+
+
+================================================================================
+TIER 4: MODERATELY IMPORTANT FEATURES (5-7/10)
+================================================================================
+
+9. ONSET STRENGTH
+   ├─ Importance: 6/10 ⭐⭐⭐
+   ├─ Why Moderate:
+   │  • Detects syllable/phoneme onsets (attack points)
+   │  • Good for consonant articulation detection
+   │  • Helps identify speech segments
+   │  • Less critical than frequency-based features
+   │  • Complements rhythm analysis
+   ├─ Use Case: Articulation and phoneme boundary detection
+   └─ Visualization: Onset strength envelope overlaid on spectrogram
+
+10. CHROMA FEATURES
+    ├─ Importance: 6/10 ⭐⭐⭐
+    ├─ Why Moderate:
+    │  • Shows pitch class profile (musical notes)
+    │  • Useful for harmonic content
+    │  • Less direct than F0 for voice analysis
+    │  • More relevant for music than speech
+    │  • Good complementary information
+    ├─ Use Case: Harmonic content and pitch class tracking
+    └─ Visualization: 12 pitch classes over time
+
+11. SPECTRAL FEATURES (Centroid + Rolloff + ZCR)
+    ├─ Importance: 6/10 ⭐⭐⭐
+    ├─ Why Moderate:
+    │  • Centroid: Shows average frequency (brightness)
+    │  • Rolloff: Shows high-frequency cutoff
+    │  • ZCR: Indicates noise/fricatives
+    │  • Good aggregate measures but less detailed
+    │  • Combined view useful for quick assessment
+    ├─ Use Case: Quick spectral characteristics overview
+    └─ Visualization: Three overlaid curves on mel-spectrogram
+
+
+================================================================================
+TIER 5: LOWER IMPORTANCE FEATURES (4-5/10)
+================================================================================
+
+12. TEMPOGRAM (Tempo/Rhythm)
+    ├─ Importance: 4/10 ⭐⭐
+    ├─ Why Lower Priority:
+    │  • Measures beat/rhythm information
+    │  • More relevant for music than voice
+    │  • Less critical for vocal tract analysis
+    │  • Still useful for prosody (speech rhythm)
+    │  • Secondary to frequency-based features
+    ├─ Use Case: Speech rhythm and prosody analysis
+    └─ Visualization: Tempo strength over time
+
+
+================================================================================
+RECOMMENDED PRIORITY ORDER FOR VOCAL BOX ANALYSIS
+================================================================================
+
+START HERE (Essential):
+  1. Pitch/F0 Contour          → Primary vocal characteristic
+  2. Mel-Spectrogram           → Overall frequency content
+  3. MFCC                      → Vocal tract shape
+  4. Harmonic/Percussive Sep.  → Voice quality/clarity
+
+SECONDARY (Important Context):
+  5. RMS Energy                → Vocal intensity
+  6. Spectrogram               → Detailed frequency view
+  7. Spectral Contrast         → Voice clarity metrics
+  8. Onset Strength            → Articulation points
+
+SUPPLEMENTARY (Nice to Have):
+  9. Waveform                  → Visual signal inspection
+  10. Chroma                   → Harmonic information
+  11. Spectral Features        → Quick metrics
+  12. Tempogram                → Rhythm/prosody
+
+
+================================================================================
+QUICK INTERPRETATION GUIDE
+================================================================================
+
+For Vocal Box Analysis, Look For:
+
+PITCH/F0 CONTOUR:
+  • Smooth contours = healthy voice
+  • Irregular jumps = vocal stress or instability
+  • Missing values = unvoiced segments (fricatives, silence)
+
+MEL-SPECTROGRAM:
+  • Bright colors = strong frequency content (formants)
+  • Clear bands = clean vowels
+  • Blurred/noisy = consonants or breathiness
+
+HARMONIC/PERCUSSIVE SEPARATION:
+  • Strong harmonic component = clear vowels
+  • Strong percussive component = noisy consonants
+  • Balanced = natural speech
+
+MFCC:
+  • Smooth changes = natural speech
+  • Sharp changes = fricatives or stops
+  • Consistent patterns = vowel stability
+
+RMS ENERGY:
+  • High peaks = loud/emphasized syllables
+  • Low valleys = weak or unvoiced sounds
+  • Smooth envelope = controlled vocal dynamics
+
+
+================================================================================
+FEATURE COMBINATION RECOMMENDATIONS
+================================================================================
+
+Minimum Set (for quick analysis):
+  ✓ Pitch/F0 Contour
+  ✓ Mel-Spectrogram
+  ✓ Harmonic/Percussive Separation
+
+Standard Set (for comprehensive analysis):
+  ✓ Pitch/F0 Contour
+  ✓ Mel-Spectrogram
+  ✓ MFCC
+  ✓ Harmonic/Percussive Separation
+  ✓ RMS Energy
+  ✓ Spectral Contrast
+
+Complete Set (all 12 features):
+  ✓ All visualizations for maximum detail and cross-validation
+
+
+================================================================================
+FINAL NOTES
+================================================================================
+
+• Mel-Spectrogram and F0 Contour are the "first two you should look at"
+• MFCC and Harmonic/Percussive separation reveal vocal tract properties
+• RMS Energy shows how vocal production is controlled
+• For machine learning models, combine multiple features (MFCC + F0 + RMS)
+• Spectral Contrast helps identify voice quality issues
+• Tempogram is lower priority unless analyzing speech rhythm/prosody
+
+
+Generated: February 16, 2026
+Purpose: Vocal Box/Vocal Tract Analysis Guidance
+================================================================================
