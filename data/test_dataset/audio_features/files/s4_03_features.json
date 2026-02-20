@@ -1,0 +1,53 @@
+{
+  "waveform_shape": [
+    824141
+  ],
+  "mel_spectrogram_shape": [
+    128,
+    1610
+  ],
+  "spectrogram_shape": [
+    1025,
+    1610
+  ],
+  "mfcc_shape": [
+    13,
+    1610
+  ],
+  "chroma_shape": [
+    12,
+    1610
+  ],
+  "spectral_centroid_shape": [
+    1610
+  ],
+  "spectral_rolloff_shape": [
+    1610
+  ],
+  "zero_crossing_rate_shape": [
+    1610
+  ],
+  "tempogram_shape": [
+    384,
+    1610
+  ],
+  "rms_energy_shape": [
+    1610
+  ],
+  "pitch_shape": [
+    1610
+  ],
+  "onset_strength_shape": [
+    1610
+  ],
+  "spectral_contrast_shape": [
+    7,
+    1610
+  ],
+  "harmonic_component_shape": [
+    824141
+  ],
+  "percussive_component_shape": [
+    824141
+  ]
+}
