@@ -9,6 +9,7 @@ import librosa
 import librosa.display
 from librosa import feature
 from pathlib import Path
+import json
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -720,8 +721,45 @@ class AudioFeatureExtractor:
         }
         return features
 
+    def save_all_features(self, output_path):
+        """
+        Extract all features and save them to a compressed .npz file.
 
-def process_audio_directory(audio_directory, output_directory=None, plot_all=True):
+        Parameters:
+        -----------
+        output_path : str
+            Path to save feature archive (.npz)
+        """
+        features = self.extract_all_features()
+
+        serializable = {}
+        summary = {}
+        for key, value in features.items():
+            if isinstance(value, tuple) and len(value) == 2 and key == 'harmonic_percussive':
+                harmonic, percussive = value
+                serializable['harmonic_component'] = harmonic
+                serializable['percussive_component'] = percussive
+                summary['harmonic_component_shape'] = list(harmonic.shape)
+                summary['percussive_component_shape'] = list(percussive.shape)
+            else:
+                serializable[key] = value
+                if hasattr(value, 'shape'):
+                    summary[f'{key}_shape'] = list(value.shape)
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(output_path, **serializable)
+
+        summary_path = output_path.with_suffix('.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2)
+
+        print(f"Saved features to: {output_path}")
+        print(f"Saved feature summary to: {summary_path}")
+
+
+def process_audio_directory(audio_directory, output_directory=None, plot_all=True,
+                            save_features=False, features_directory=None):
     """
     Process all audio files in a directory.
     
@@ -733,6 +771,10 @@ def process_audio_directory(audio_directory, output_directory=None, plot_all=Tru
         Directory to save visualizations
     plot_all : bool, optional
         Whether to plot all features for each file
+    save_features : bool, optional
+        Whether to save extracted feature arrays for each file
+    features_directory : str, optional
+        Directory to save feature .npz/.json files
     """
     # Use non-interactive backend for batch processing
     import matplotlib
@@ -751,11 +793,26 @@ def process_audio_directory(audio_directory, output_directory=None, plot_all=Tru
         return
     
     print(f"Found {len(audio_files)} audio files\n")
+
+    if output_directory:
+        Path(output_directory).mkdir(parents=True, exist_ok=True)
+
+    if save_features:
+        if features_directory is None:
+            if output_directory:
+                features_directory = str(Path(output_directory) / 'features')
+            else:
+                features_directory = str(audio_dir / 'audio_features')
+        Path(features_directory).mkdir(parents=True, exist_ok=True)
     
     for audio_file in audio_files:
         try:
             print(f"Processing: {audio_file.name}")
             extractor = AudioFeatureExtractor(str(audio_file))
+
+            if save_features:
+                features_out = Path(features_directory) / f"{audio_file.stem}_features.npz"
+                extractor.save_all_features(str(features_out))
             
             if plot_all and output_directory:
                 extractor.plot_all_features(output_directory)
@@ -773,13 +830,14 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python audio_feature_extraction.py <audio_file_path> [--plot-all] [--output-dir OUTPUT_DIR]")
+        print("Usage: python audio_feature_extraction.py <audio_file_path> [--plot-all] [--output-dir OUTPUT_DIR] [--save-features] [--features-dir FEATURES_DIR]")
         print("\nExamples:")
         print("  python audio_feature_extraction.py audio.mp3")
         print("  python audio_feature_extraction.py audio.mp3 --plot-all")
         print("  python audio_feature_extraction.py audio.mp3 --output-dir ./plots/")
+        print("  python audio_feature_extraction.py audio.mp3 --output-dir ./plots/ --save-features --features-dir ./features/")
         print("\nTo process a directory:")
-        print("  python audio_feature_extraction.py --directory audio_folder/ --output-dir ./plots/")
+        print("  python audio_feature_extraction.py --directory audio_folder/ --output-dir ./plots/ --save-features")
     else:
         if sys.argv[1] == "--directory":
             # Directory mode
@@ -789,21 +847,43 @@ if __name__ == "__main__":
             
             audio_dir = sys.argv[2]
             output_dir = None
+            save_features = "--save-features" in sys.argv
+            features_dir = None
             
             if "--output-dir" in sys.argv:
                 output_dir = sys.argv[sys.argv.index("--output-dir") + 1]
+
+            if "--features-dir" in sys.argv:
+                features_dir = sys.argv[sys.argv.index("--features-dir") + 1]
             
-            process_audio_directory(audio_dir, output_dir)
+            process_audio_directory(audio_dir, output_dir, plot_all=True,
+                                    save_features=save_features,
+                                    features_directory=features_dir)
         else:
             # Single file mode
             audio_file = sys.argv[1]
             plot_all = "--plot-all" in sys.argv
             output_dir = None
+            save_features = "--save-features" in sys.argv
+            features_dir = None
             
             if "--output-dir" in sys.argv:
                 output_dir = sys.argv[sys.argv.index("--output-dir") + 1]
+
+            if "--features-dir" in sys.argv:
+                features_dir = sys.argv[sys.argv.index("--features-dir") + 1]
             
             extractor = AudioFeatureExtractor(audio_file)
+
+            if save_features:
+                if features_dir is None:
+                    if output_dir:
+                        features_dir = str(Path(output_dir) / 'features')
+                    else:
+                        features_dir = str(Path(audio_file).parent / 'audio_features')
+                Path(features_dir).mkdir(parents=True, exist_ok=True)
+                feature_path = Path(features_dir) / f"{Path(audio_file).stem}_features.npz"
+                extractor.save_all_features(str(feature_path))
             
             if plot_all:
                 extractor.plot_all_features(output_dir)
