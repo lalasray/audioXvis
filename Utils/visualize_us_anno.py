@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 
-def load_sampled_frames(video_path: str, target_fps: int, crop: bool = True):
+def load_video_frames(video_path: str, crop: bool = True):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video: {video_path}")
@@ -13,25 +13,16 @@ def load_sampled_frames(video_path: str, target_fps: int, crop: bool = True):
         cap.release()
         raise RuntimeError("Could not read source FPS from video.")
 
-    frame_interval = original_fps / float(target_fps)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     frames = []
-    frame_index = 0
-    next_keep = 0.0
-
-    while frame_index < frame_count:
+    while len(frames) < frame_count:
         ok, frame = cap.read()
         if not ok:
             break
-
-        if frame_index + 1e-9 >= next_keep:
-            if crop:
-                frame = frame[0:600, 600:1200]
-            frames.append(frame)
-            next_keep += frame_interval
-
-        frame_index += 1
+        if crop:
+            frame = frame[0:600, 600:1200]
+        frames.append(frame)
 
     cap.release()
     return frames, original_fps
@@ -61,15 +52,11 @@ def _bezier_quad(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int = 40) ->
     return (1 - t) ** 2 * p0 + 2 * (1 - t) * t * p1 + (t ** 2) * p2
 
 
-def interpolate_sparse_points(points: np.ndarray, upsample: int, smooth_window: int) -> np.ndarray:
-    """
-    Interpolates sparse landmark tracks.
-    - Missing points (0,0) are treated as gaps and linearly filled over time.
-    - Sequence is upsampled for continuous playback.
-    """
+def interpolate_points_to_frame_count(points: np.ndarray, target_frames: int) -> np.ndarray:
+    """Interpolate sparse landmark tracks to match original video frame count."""
     n_frames, n_pts, _ = points.shape
     t_src = np.arange(n_frames, dtype=np.float32)
-    t_dst = np.linspace(0.0, n_frames - 1, (n_frames - 1) * upsample + 1, dtype=np.float32)
+    t_dst = np.linspace(0.0, n_frames - 1, target_frames, dtype=np.float32)
 
     dense = np.zeros((len(t_dst), n_pts, 2), dtype=np.float32)
 
@@ -87,53 +74,92 @@ def interpolate_sparse_points(points: np.ndarray, upsample: int, smooth_window: 
             filled = np.interp(t_src, src_valid_t, src_valid_v)
             interp = np.interp(t_dst, t_src, filled)
 
-            if smooth_window > 1:
-                kernel = np.ones(smooth_window, dtype=np.float32) / float(smooth_window)
-                interp = np.convolve(interp, kernel, mode="same")
+            first_valid = src_valid_t[0]
+            last_valid = src_valid_t[-1]
+            interp[t_dst < first_valid] = src_valid_v[0]
+            interp[t_dst > last_valid] = src_valid_v[-1]
 
             dense[:, p, axis] = interp
 
     return dense
 
 
-def interpolate_frames(frames, upsample: int):
-    """Frame interpolation by alpha blending between sampled frames."""
-    if upsample <= 1:
-        return frames
+def draw_dotted_line(
+    image: np.ndarray,
+    start: np.ndarray,
+    end: np.ndarray,
+    color=(0, 255, 255),
+    thickness: int = 2,
+    gap: int = 9,
+):
+    vec = end - start
+    length = float(np.linalg.norm(vec))
+    if length < 1.0:
+        return
 
-    dense_frames = []
-    for i in range(len(frames) - 1):
-        f0 = frames[i]
-        f1 = frames[i + 1]
-        for k in range(upsample):
-            alpha = k / float(upsample)
-            blended = cv2.addWeighted(f0, 1.0 - alpha, f1, alpha, 0.0)
-            dense_frames.append(blended)
-    dense_frames.append(frames[-1])
-    return dense_frames
+    direction = vec / length
+    n_dots = int(length // gap) + 1
+    for i in range(n_dots + 1):
+        p = start + direction * (i * gap)
+        cv2.circle(image, tuple(p.astype(np.int32)), thickness, color, -1, cv2.LINE_AA)
+
+
+def draw_raw_with_points(
+    frame: np.ndarray,
+    points: np.ndarray,
+    frame_idx: int,
+    total_frames: int,
+) -> np.ndarray:
+    out = frame.copy()
+
+    for i, pt in enumerate(points):
+        if not np.allclose(pt, 0):
+            cv2.circle(out, (int(pt[0]), int(pt[1])), 5, (255, 255, 210), -1)
+            cv2.putText(
+                out,
+                str(i + 1),
+                (int(pt[0]) + 6, int(pt[1]) - 6),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
+
+    cv2.putText(
+        out,
+        f"Frame {frame_idx + 1}/{total_frames}",
+        (10, 25),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        out,
+        "Raw + 5 landmarks",
+        (10, 52),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    return out
 
 
 def draw_deformable_larynx(
-    frame: np.ndarray,
+    canvas: np.ndarray,
     points: np.ndarray,
     frame_idx: int,
     total_frames: int,
     show_points: bool,
 ) -> np.ndarray:
-    out = frame.copy()
+    out = canvas.copy()
 
     valid = [not np.allclose(pt, 0) for pt in points]
     if not all(valid):
-        cv2.putText(
-            out,
-            f"Frame {frame_idx + 1}/{total_frames} (missing landmark)",
-            (10, 25),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (0, 0, 255),
-            2,
-            cv2.LINE_AA,
-        )
         return out
 
     p1, p2, p3, p4, p5 = [pt.astype(np.float32) for pt in points]
@@ -162,8 +188,8 @@ def draw_deformable_larynx(
     right_yellow = np.array([p3, top_right, p4], dtype=np.int32)
     cv2.fillPoly(overlay, [left_yellow, right_yellow], color=(0, 190, 255))
 
-    left_red = np.array([p2, top_left, p5, mid_bottom], dtype=np.int32)
-    right_red = np.array([mid_bottom, p5, top_right, p3], dtype=np.int32)
+    left_red = np.array([p2, p5, mid_bottom], dtype=np.int32)
+    right_red = np.array([mid_bottom, p5, p3], dtype=np.int32)
     cv2.fillPoly(overlay, [left_red, right_red], color=(35, 35, 230))
 
     left_green = np.array(
@@ -192,6 +218,12 @@ def draw_deformable_larynx(
     cv2.polylines(out, [inner_curve.astype(np.int32)], False, (255, 210, 40), 2, cv2.LINE_AA)
     cv2.line(out, tuple(p5.astype(np.int32)), tuple(mid_bottom.astype(np.int32)), (10, 10, 10), 2, cv2.LINE_AA)
 
+    mid_12 = (p1 + p2) * 0.5
+    mid_34 = (p3 + p4) * 0.5
+    draw_dotted_line(out, mid_12, mid_34, color=(60, 255, 255), thickness=2, gap=10)
+    draw_dotted_line(out, mid_34, p5, color=(60, 255, 255), thickness=2, gap=10)
+    draw_dotted_line(out, p5, mid_12, color=(60, 255, 255), thickness=2, gap=10)
+
     if show_points:
         for i, pt in enumerate(points):
             cv2.circle(out, (int(pt[0]), int(pt[1])), 5, (255, 255, 210), -1)
@@ -208,11 +240,11 @@ def draw_deformable_larynx(
 
     cv2.putText(
         out,
-        f"Frame {frame_idx + 1}/{total_frames}",
+        "Projection on white",
         (10, 25),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 255, 255),
+        0.65,
+        (40, 40, 40),
         2,
         cv2.LINE_AA,
     )
@@ -225,28 +257,9 @@ def main():
     parser.add_argument("-i", "--input_video", required=True, help="Path to input video.")
     parser.add_argument("-a", "--annotation_csv", required=True, help="Path to annotation CSV file.")
     parser.add_argument(
-        "-f",
-        "--fps",
-        type=int,
-        required=True,
-        help="Annotation FPS used during labeling (same value used in anno_us.py).",
-    )
-    parser.add_argument(
         "--no_crop",
         action="store_true",
         help="Disable ultrasound crop. Default uses frame[0:600, 600:1200] to match anno_us.py.",
-    )
-    parser.add_argument(
-        "--upsample",
-        type=int,
-        default=4,
-        help="Interpolation factor for continuous visualization (default: 4).",
-    )
-    parser.add_argument(
-        "--smooth_window",
-        type=int,
-        default=5,
-        help="Temporal smoothing window on interpolated points (default: 5).",
     )
     parser.add_argument(
         "--hide_points",
@@ -256,35 +269,20 @@ def main():
 
     args = parser.parse_args()
 
-    frames, original_fps = load_sampled_frames(args.input_video, args.fps, crop=not args.no_crop)
+    frames, original_fps = load_video_frames(args.input_video, crop=not args.no_crop)
     points = load_points(args.annotation_csv)
 
     if len(frames) == 0:
         raise RuntimeError("No frames loaded from video after sampling.")
 
-    total_sampled = min(len(frames), len(points))
-    if len(frames) != len(points):
-        print(
-            f"Warning: sampled frames ({len(frames)}) and annotation rows ({len(points)}) differ. "
-            f"Visualizing first {total_sampled} frames."
-        )
-    frames = frames[:total_sampled]
-    points = points[:total_sampled]
-
-    dense_points = interpolate_sparse_points(
-        points,
-        upsample=max(1, args.upsample),
-        smooth_window=max(1, args.smooth_window),
-    )
-    dense_frames = interpolate_frames(frames, upsample=max(1, args.upsample))
-    total = min(len(dense_frames), len(dense_points))
-    dense_frames = dense_frames[:total]
-    dense_points = dense_points[:total]
+    dense_frames = frames
+    dense_points = interpolate_points_to_frame_count(points, target_frames=len(frames))
+    total = len(dense_frames)
 
     print(f"Original FPS: {original_fps:.2f}")
-    print(f"Sampled frames: {len(frames)}")
+    print(f"Video frames: {len(frames)}")
     print(f"Annotation rows: {len(points)}")
-    print(f"Continuous frames: {total}")
+    print(f"Rendered frames: {total}")
     print("Controls: d=next, a=previous, space=play/pause, q=quit")
 
     idx = 0
@@ -292,16 +290,26 @@ def main():
     cv2.namedWindow("annotation_visualization", cv2.WINDOW_NORMAL)
 
     while True:
-        canvas = draw_deformable_larynx(
+        left = draw_raw_with_points(
             dense_frames[idx],
+            dense_points[idx],
+            idx,
+            total,
+        )
+
+        right_base = np.full_like(dense_frames[idx], 255)
+        right = draw_deformable_larynx(
+            right_base,
             dense_points[idx],
             idx,
             total,
             show_points=not args.hide_points,
         )
+
+        canvas = np.hstack([left, right])
         cv2.imshow("annotation_visualization", canvas)
 
-        delay = int(1000 / (args.fps * max(1, args.upsample))) if is_playing else 0
+        delay = max(1, int(round(1000.0 / max(1.0, original_fps)))) if is_playing else 0
         key = cv2.waitKey(delay) & 0xFF
 
         if key == ord("q"):
