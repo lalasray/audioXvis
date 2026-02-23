@@ -88,7 +88,7 @@ def draw_dotted_line(
     image: np.ndarray,
     start: np.ndarray,
     end: np.ndarray,
-    color=(0, 255, 255),
+    color=(70, 70, 70),
     thickness: int = 2,
     gap: int = 9,
 ):
@@ -104,6 +104,63 @@ def draw_dotted_line(
         cv2.circle(image, tuple(p.astype(np.int32)), thickness, color, -1, cv2.LINE_AA)
 
 
+def draw_angle_marker(
+    image: np.ndarray,
+    vertex: np.ndarray,
+    arm_a: np.ndarray,
+    arm_b: np.ndarray,
+    color=(150, 40, 180),
+    radius: int = 18,
+    thickness: int = 1,
+):
+    vec_a = arm_a - vertex
+    vec_b = arm_b - vertex
+    len_a = float(np.linalg.norm(vec_a))
+    len_b = float(np.linalg.norm(vec_b))
+    if len_a < 1.0 or len_b < 1.0:
+        return
+
+    unit_a = vec_a / len_a
+    unit_b = vec_b / len_b
+    dot_val = float(np.clip(np.dot(unit_a, unit_b), -1.0, 1.0))
+    angle_deg = float(np.degrees(np.arccos(dot_val)))
+
+    theta_a = float(np.arctan2(unit_a[1], unit_a[0]))
+    theta_b = float(np.arctan2(unit_b[1], unit_b[0]))
+    delta = (theta_b - theta_a + np.pi * 3.0) % (2.0 * np.pi) - np.pi
+
+    n_samples = 40
+    t = np.linspace(0.0, 1.0, n_samples, dtype=np.float32)
+    thetas = theta_a + delta * t
+    arc = np.stack(
+        [
+            vertex[0] + radius * np.cos(thetas),
+            vertex[1] + radius * np.sin(thetas),
+        ],
+        axis=1,
+    ).astype(np.int32)
+    cv2.polylines(image, [arc], False, color, thickness, cv2.LINE_AA)
+
+    bisector = unit_a + unit_b
+    bisector_len = float(np.linalg.norm(bisector))
+    if bisector_len < 1e-6:
+        bisector = np.array([1.0, 0.0], dtype=np.float32)
+    else:
+        bisector = bisector / bisector_len
+
+    text_pos = vertex + bisector * (radius + 14)
+    cv2.putText(
+        image,
+        f"{angle_deg:.1f}",
+        (int(text_pos[0]), int(text_pos[1])),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.35,
+        color,
+        1,
+        cv2.LINE_AA,
+    )
+
+
 def draw_raw_with_points(
     frame: np.ndarray,
     points: np.ndarray,
@@ -114,15 +171,15 @@ def draw_raw_with_points(
 
     for i, pt in enumerate(points):
         if not np.allclose(pt, 0):
-            cv2.circle(out, (int(pt[0]), int(pt[1])), 5, (255, 255, 210), -1)
+            cv2.circle(out, (int(pt[0]), int(pt[1])), 4, (255, 255, 255), -1)
             cv2.putText(
                 out,
                 str(i + 1),
                 (int(pt[0]) + 6, int(pt[1]) - 6),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
+                0.5,
                 (0, 255, 0),
-                2,
+                1,
                 cv2.LINE_AA,
             )
 
@@ -131,9 +188,9 @@ def draw_raw_with_points(
         f"Frame {frame_idx + 1}/{total_frames}",
         (10, 25),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
+        0.55,
         (0, 255, 255),
-        2,
+        1,
         cv2.LINE_AA,
     )
     cv2.putText(
@@ -141,9 +198,9 @@ def draw_raw_with_points(
         "Raw + 5 landmarks",
         (10, 52),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
+        0.5,
         (255, 255, 255),
-        2,
+        1,
         cv2.LINE_AA,
     )
     return out
@@ -179,18 +236,18 @@ def draw_deformable_larynx(
     overlay = out.copy()
 
     blue_ring = np.vstack([outer_curve, inner_curve[::-1]]).astype(np.int32)
-    cv2.fillPoly(overlay, [blue_ring], color=(220, 150, 20))
+    cv2.fillPoly(overlay, [blue_ring], color=(245, 210, 130))
 
     top_left = p5 - lr * (0.14 * width)
     top_right = p5 + lr * (0.14 * width)
 
     left_yellow = np.array([p1, top_left, p2], dtype=np.int32)
     right_yellow = np.array([p3, top_right, p4], dtype=np.int32)
-    cv2.fillPoly(overlay, [left_yellow, right_yellow], color=(0, 190, 255))
+    cv2.fillPoly(overlay, [left_yellow, right_yellow], color=(70, 190, 250))
 
     left_red = np.array([p2, p5, mid_bottom], dtype=np.int32)
     right_red = np.array([mid_bottom, p5, p3], dtype=np.int32)
-    cv2.fillPoly(overlay, [left_red, right_red], color=(35, 35, 230))
+    cv2.fillPoly(overlay, [left_red, right_red], color=(80, 80, 220))
 
     left_green = np.array(
         [
@@ -210,42 +267,45 @@ def draw_deformable_larynx(
         ],
         dtype=np.int32,
     )
-    cv2.fillPoly(overlay, [left_green, right_green], color=(70, 210, 70))
+    cv2.fillPoly(overlay, [left_green, right_green], color=(90, 195, 90))
 
-    out = cv2.addWeighted(overlay, 0.45, out, 0.55, 0.0)
+    out = cv2.addWeighted(overlay, 0.35, out, 0.65, 0.0)
 
-    cv2.polylines(out, [outer_curve.astype(np.int32)], False, (255, 210, 40), 2, cv2.LINE_AA)
-    cv2.polylines(out, [inner_curve.astype(np.int32)], False, (255, 210, 40), 2, cv2.LINE_AA)
+    cv2.polylines(out, [outer_curve.astype(np.int32)], False, (220, 150, 40), 2, cv2.LINE_AA)
+    cv2.polylines(out, [inner_curve.astype(np.int32)], False, (220, 150, 40), 2, cv2.LINE_AA)
     cv2.line(out, tuple(p5.astype(np.int32)), tuple(mid_bottom.astype(np.int32)), (10, 10, 10), 2, cv2.LINE_AA)
 
     mid_12 = (p1 + p2) * 0.5
     mid_34 = (p3 + p4) * 0.5
-    draw_dotted_line(out, mid_12, mid_34, color=(60, 255, 255), thickness=2, gap=10)
-    draw_dotted_line(out, mid_34, p5, color=(60, 255, 255), thickness=2, gap=10)
-    draw_dotted_line(out, p5, mid_12, color=(60, 255, 255), thickness=2, gap=10)
+    draw_dotted_line(out, mid_12, mid_34, color=(80, 80, 80), thickness=2, gap=10)
+    draw_dotted_line(out, mid_34, p5, color=(80, 80, 80), thickness=2, gap=10)
+    draw_dotted_line(out, p5, mid_12, color=(80, 80, 80), thickness=2, gap=10)
+    draw_angle_marker(out, mid_12, mid_34, p5)
+    draw_angle_marker(out, mid_34, p5, mid_12)
+    draw_angle_marker(out, p5, mid_12, mid_34)
 
     if show_points:
         for i, pt in enumerate(points):
-            cv2.circle(out, (int(pt[0]), int(pt[1])), 5, (255, 255, 210), -1)
+            cv2.circle(out, (int(pt[0]), int(pt[1])), 4, (255, 255, 255), -1)
             cv2.putText(
                 out,
                 str(i + 1),
                 (int(pt[0]) + 6, int(pt[1]) - 6),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
+                0.5,
                 (0, 255, 0),
-                2,
+                1,
                 cv2.LINE_AA,
             )
 
     cv2.putText(
         out,
-        "Projection on white",
+        "2D render",
         (10, 25),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
+        0.5,
         (40, 40, 40),
-        2,
+        1,
         cv2.LINE_AA,
     )
 
@@ -307,6 +367,7 @@ def main():
         )
 
         canvas = np.hstack([left, right])
+        canvas = cv2.resize(canvas, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
         cv2.imshow("annotation_visualization", canvas)
 
         delay = max(1, int(round(1000.0 / max(1.0, original_fps)))) if is_playing else 0
