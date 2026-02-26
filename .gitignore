@@ -9,3 +9,4 @@ out.csv
 /data/dataset
 /data/model
 /data/test_dataset/audio_features
+gt_s6_05.csv
