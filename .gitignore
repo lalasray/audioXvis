@@ -10,3 +10,4 @@ out.csv
 /data/model
 /data/test_dataset/audio_features
 gt_s6_05.csv
+/data/test_dataset/sliding_1s_hop_0p1_all
