@@ -247,7 +247,7 @@ def process_one_pair(
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Generate sliding-window 2-second video clips (with audio) and matching annotation CSV clips "
+            "Generate sliding-window 3-second video clips (with audio) and matching annotation CSV clips "
             "from one pair or all auto-matched pairs in directories."
         )
     )
@@ -256,8 +256,8 @@ def main():
     parser.add_argument("--video_dir", required=False, help="Directory of videos for batch auto-pair mode.")
     parser.add_argument("--annotation_dir", required=False, help="Directory of annotation CSVs for batch auto-pair mode.")
     parser.add_argument("-o", "--output_dir", required=True, help="Directory to save generated clips.")
-    parser.add_argument("--window_sec", type=float, default=2.0, help="Window length in seconds (default: 2.0).")
-    parser.add_argument("--hop_sec", type=float, default=0.2, help="Sliding hop in seconds (default: 0.2).")
+    parser.add_argument("--window_sec", type=float, default=3.0, help="Window length in seconds (default: 3.0).")
+    parser.add_argument("--hop_sec", type=float, default=0.3, help="Sliding hop in seconds (default: 0.3).")
     parser.add_argument(
         "--max_clips",
         type=int,
