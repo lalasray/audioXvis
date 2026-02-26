@@ -2,6 +2,7 @@ import argparse
 import csv
 import cv2
 import numpy as np
+from pathlib import Path
 
 
 def load_points(csv_path: str) -> np.ndarray:
@@ -138,6 +139,21 @@ def write_csv(output_path: str, header, rows):
         writer.writerows(rows)
 
 
+def ensure_output_contains_video_name(output_csv: str, input_video: str | None) -> str:
+    if not input_video:
+        return output_csv
+
+    output_path = Path(output_csv)
+    video_stem = Path(input_video).stem
+
+    if video_stem in output_path.stem:
+        return str(output_path)
+
+    suffix = output_path.suffix if output_path.suffix else ".csv"
+    new_name = f"{output_path.stem}_{video_stem}{suffix}"
+    return str(output_path.with_name(new_name))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
@@ -157,15 +173,16 @@ def main():
     args = parser.parse_args()
 
     points = load_points(args.annotation_csv)
+    output_csv = ensure_output_contains_video_name(args.output_csv, args.input_video)
 
     if args.input_video:
         target_frames = get_video_frame_count(args.input_video)
         points = interpolate_points_to_frame_count(points, target_frames=target_frames)
 
     header, rows = extract_geometry(points)
-    write_csv(args.output_csv, header, rows)
+    write_csv(output_csv, header, rows)
 
-    print(f"Saved geometry features: {args.output_csv}")
+    print(f"Saved geometry features: {output_csv}")
     print(f"Rows: {len(rows)}")
 
 

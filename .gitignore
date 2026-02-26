@@ -1,5 +1,4 @@
 
-/data
 /.venv
 /.vscode
 /Utils/__pycache__
@@ -7,3 +6,6 @@
 /Utils/rolling_clips_features
 /rolling_video_clips
 out.csv
+/data/dataset
+/data/model
+/data/test_dataset/audio_features
