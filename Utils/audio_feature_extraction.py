@@ -721,9 +721,110 @@ class AudioFeatureExtractor:
         }
         return features
 
+    @staticmethod
+    def _safe_zscore(x, axis=None, eps=1e-8):
+        """Z-score normalize with numerical safety."""
+        x = np.asarray(x, dtype=np.float32)
+        mean = np.mean(x, axis=axis, keepdims=True)
+        std = np.std(x, axis=axis, keepdims=True)
+        std = np.where(std < eps, 1.0, std)
+        return (x - mean) / std
+
+    @staticmethod
+    def _safe_minmax(x, axis=None, eps=1e-8):
+        """Min-max normalize to [0, 1] with numerical safety."""
+        x = np.asarray(x, dtype=np.float32)
+        x_min = np.min(x, axis=axis, keepdims=True)
+        x_max = np.max(x, axis=axis, keepdims=True)
+        denom = np.where((x_max - x_min) < eps, 1.0, (x_max - x_min))
+        return (x - x_min) / denom
+
+    def normalize_features(self, features):
+        """
+        Normalize extracted features for improved cross-user comparability.
+
+        Returns:
+        --------
+        tuple[dict, dict]
+            (normalized_features, normalization_metadata)
+        """
+        normalized = {}
+        normalization_meta = {}
+
+        zscore_keys = {
+            'mel_spectrogram',
+            'spectrogram',
+            'mfcc',
+            'chroma',
+            'tempogram',
+            'spectral_contrast',
+        }
+
+        minmax_keys = {
+            'waveform',
+            'rms_energy',
+            'spectral_centroid',
+            'spectral_rolloff',
+            'zero_crossing_rate',
+            'onset_strength',
+        }
+
+        for key, value in features.items():
+            if key == 'harmonic_percussive' and isinstance(value, tuple) and len(value) == 2:
+                harmonic, percussive = value
+                harmonic = np.asarray(harmonic, dtype=np.float32)
+                percussive = np.asarray(percussive, dtype=np.float32)
+
+                harmonic_norm = self._safe_minmax(harmonic)
+                percussive_norm = self._safe_minmax(percussive)
+
+                total_energy = np.abs(harmonic) + np.abs(percussive)
+                total_energy = np.where(total_energy < 1e-8, 1.0, total_energy)
+                harmonic_ratio = np.abs(harmonic) / total_energy
+
+                normalized['harmonic_component'] = harmonic_norm
+                normalized['percussive_component'] = percussive_norm
+                normalized['harmonic_ratio'] = harmonic_ratio.astype(np.float32)
+
+                normalization_meta['harmonic_component'] = 'minmax'
+                normalization_meta['percussive_component'] = 'minmax'
+                normalization_meta['harmonic_ratio'] = 'ratio_abs_h_over_abs_h_plus_abs_p'
+                continue
+
+            arr = np.asarray(value, dtype=np.float32)
+
+            if key == 'pitch':
+                voiced_mask = arr > 0
+                out = np.zeros_like(arr, dtype=np.float32)
+                if np.any(voiced_mask):
+                    voiced_values = arr[voiced_mask]
+                    voiced_min = np.min(voiced_values)
+                    voiced_max = np.max(voiced_values)
+                    denom = (voiced_max - voiced_min) if (voiced_max - voiced_min) > 1e-8 else 1.0
+                    out[voiced_mask] = (voiced_values - voiced_min) / denom
+                normalized[key] = out
+                normalization_meta[key] = 'voiced_only_minmax_unvoiced_zero'
+                continue
+
+            if key in zscore_keys:
+                if arr.ndim >= 2:
+                    normalized[key] = self._safe_zscore(arr, axis=-1)
+                    normalization_meta[key] = 'zscore_per_band_over_time'
+                else:
+                    normalized[key] = self._safe_zscore(arr)
+                    normalization_meta[key] = 'zscore_global'
+            elif key in minmax_keys:
+                normalized[key] = self._safe_minmax(arr)
+                normalization_meta[key] = 'minmax_global'
+            else:
+                normalized[key] = arr
+                normalization_meta[key] = 'none'
+
+        return normalized, normalization_meta
+
     def save_all_features(self, output_path):
         """
-        Extract all features and save them to a compressed .npz file.
+        Extract all features, normalize them, and save to a compressed .npz file.
 
         Parameters:
         -----------
@@ -731,20 +832,15 @@ class AudioFeatureExtractor:
             Path to save feature archive (.npz)
         """
         features = self.extract_all_features()
+        features, normalization_meta = self.normalize_features(features)
 
         serializable = {}
         summary = {}
+        summary['normalization'] = normalization_meta
         for key, value in features.items():
-            if isinstance(value, tuple) and len(value) == 2 and key == 'harmonic_percussive':
-                harmonic, percussive = value
-                serializable['harmonic_component'] = harmonic
-                serializable['percussive_component'] = percussive
-                summary['harmonic_component_shape'] = list(harmonic.shape)
-                summary['percussive_component_shape'] = list(percussive.shape)
-            else:
-                serializable[key] = value
-                if hasattr(value, 'shape'):
-                    summary[f'{key}_shape'] = list(value.shape)
+            serializable[key] = value
+            if hasattr(value, 'shape'):
+                summary[f'{key}_shape'] = list(value.shape)
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
