@@ -10,10 +10,12 @@ import numpy as np
 
 try:
 	import torch
+	import torch.nn.functional as F
 	from torch.utils.data import DataLoader, Dataset
 	TORCH_AVAILABLE = True
 except ImportError:
 	torch = None
+	F = None
 	DataLoader = None
 	Dataset = object
 	TORCH_AVAILABLE = False
@@ -179,7 +181,39 @@ def dict_feature_collate(batch: List[Dict]) -> Dict:
 	y_list = [item["y"] for item in batch]
 
 	if isinstance(x_list[0], dict):
-		x_out = {k: [d[k] for d in x_list] for k in x_list[0].keys()}
+		x_out = {}
+		for k in x_list[0].keys():
+			vals = [d[k] for d in x_list]
+			if TORCH_AVAILABLE and isinstance(vals[0], torch.Tensor):
+				if vals[0].ndim == 1:
+					max_t = max(v.shape[0] for v in vals)
+					padded = []
+					for v in vals:
+						if v.shape[0] < max_t:
+							v = F.pad(v, (0, max_t - v.shape[0]))
+						padded.append(v)
+					x_out[k] = torch.stack(padded, dim=0)
+				elif vals[0].ndim == 2:
+					max_t = max(v.shape[1] for v in vals)
+					padded = []
+					for v in vals:
+						if v.shape[1] < max_t:
+							v = F.pad(v, (0, max_t - v.shape[1]))
+						padded.append(v)
+					x_out[k] = torch.stack(padded, dim=0)
+				else:
+					raise ValueError(f"Unsupported feature ndim for key {k}: {vals[0].ndim}")
+			else:
+				if vals[0].ndim == 1:
+					max_t = max(v.shape[0] for v in vals)
+					padded = [np.pad(v, (0, max_t - v.shape[0])) if v.shape[0] < max_t else v for v in vals]
+					x_out[k] = np.stack(padded, axis=0)
+				elif vals[0].ndim == 2:
+					max_t = max(v.shape[1] for v in vals)
+					padded = [np.pad(v, ((0, 0), (0, max_t - v.shape[1]))) if v.shape[1] < max_t else v for v in vals]
+					x_out[k] = np.stack(padded, axis=0)
+				else:
+					raise ValueError(f"Unsupported feature ndim for key {k}: {vals[0].ndim}")
 	else:
 		x_out = torch.stack(x_list, dim=0) if TORCH_AVAILABLE else np.stack(x_list, axis=0)
 
