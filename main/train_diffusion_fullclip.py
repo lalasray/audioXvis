@@ -71,6 +71,7 @@ class TrainConfig:
     ema_decay: float = 0.999
     grad_clip: float = 1.0
     mixup_alpha: float = 0.3
+    holdout_clips: str = ""  # comma-separated clip names to exclude from train+val
     # output
     output_dir: str = "main/checkpoints/diffusion_v2"
 
@@ -525,6 +526,13 @@ def train(cfg: TrainConfig) -> None:
     # Clip-based train/val split
     clip_idx = dataset.get_clip_indices()
     clip_names = sorted(clip_idx.keys())
+
+    # Remove holdout clips (used for fair held-out evaluation)
+    if cfg.holdout_clips:
+        holdout = set(c.strip() for c in cfg.holdout_clips.split(",") if c.strip())
+        clip_names = [c for c in clip_names if c not in holdout]
+        print(f"  Holdout clips removed from pool: {sorted(holdout)}")
+
     rng = np.random.RandomState(cfg.seed)
     rng.shuffle(clip_names)
     n_val_clips = max(1, int(len(clip_names) * cfg.val_ratio))
