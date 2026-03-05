@@ -1,10 +1,10 @@
 {
   "clips_root": "/home/lala/Documents/GitHub/audioXvis/data/test_dataset/full_clips",
-  "batch_size": 2,
-  "epochs": 1,
+  "batch_size": 64,
+  "epochs": 200,
   "lr": 0.0003,
   "weight_decay": 0.0001,
-  "num_workers": 0,
+  "num_workers": 8,
   "seed": 42,
   "val_ratio": 0.15,
   "diffusion_steps": 200,
