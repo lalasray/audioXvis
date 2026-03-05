@@ -18,9 +18,9 @@ import csv
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import librosa
 import numpy as np
 import torch
+import torchaudio
 from torch.utils.data import Dataset, DataLoader, Subset
 
 # ── constants ────────────────────────────────────────────────────────────────
@@ -55,38 +55,116 @@ def load_annotation_csv(csv_path: Path) -> Tuple[np.ndarray, np.ndarray]:
     return t, angles
 
 
+# ── torchaudio transforms (created once, reused) ────────────────────────────
+
+_mel_transform = torchaudio.transforms.MelSpectrogram(
+    sample_rate=SR, n_fft=N_FFT, hop_length=HOP_LENGTH,
+    n_mels=N_MELS, power=2.0,
+)
+_amp_to_db = torchaudio.transforms.AmplitudeToDB(stype="power", top_db=80.0)
+_mfcc_transform = torchaudio.transforms.MFCC(
+    sample_rate=SR, n_mfcc=N_MFCC,
+    melkwargs={"n_fft": N_FFT, "hop_length": HOP_LENGTH, "n_mels": N_MELS},
+)
+
+
+# ── audio loading ────────────────────────────────────────────────────────────
+
+def load_audio(path: str | Path, sr: int = SR) -> np.ndarray:
+    """Load audio from file, resample to target sr, return mono float32 numpy."""
+    waveform, orig_sr = torchaudio.load(str(path))
+    if waveform.shape[0] > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+    if orig_sr != sr:
+        waveform = torchaudio.functional.resample(waveform, orig_sr, sr)
+    return waveform.squeeze(0).numpy()
+
+
 # ── feature extraction ───────────────────────────────────────────────────────
+
+
+def _spectral_contrast(
+    S: np.ndarray, sr: int, n_bands: int = 6, fmin: float = 200.0,
+) -> np.ndarray:
+    """Compute spectral contrast from a magnitude spectrogram (n_fft//2+1, T).
+
+    Splits the spectrum into `n_bands` sub-bands (log-spaced from fmin to sr/2)
+    and returns the dB difference between peaks and valleys per band, plus a
+    "valley" summary band → shape (n_bands+1, T) = (7, T) by default.
+    """
+    n_freq, n_frames = S.shape
+    freqs = np.linspace(0, sr / 2, n_freq)
+
+    # Band edges: log-spaced from fmin to sr/2
+    edges = np.concatenate(
+        [[fmin], np.exp(np.linspace(np.log(fmin), np.log(sr / 2), n_bands + 1)[1:])]
+    )
+    contrast = np.zeros((n_bands + 1, n_frames), dtype=np.float32)
+
+    alpha = 0.02  # proportion of bins for peak/valley
+    for b in range(n_bands):
+        lo, hi = edges[b], edges[b + 1]
+        mask = (freqs >= lo) & (freqs < hi)
+        if mask.sum() < 2:
+            continue
+        band = S[mask]  # (n_bins_in_band, T)
+        sorted_band = np.sort(band, axis=0)
+        k = max(1, int(alpha * band.shape[0]))
+        valley = sorted_band[:k].mean(axis=0)
+        peak = sorted_band[-k:].mean(axis=0)
+        contrast[b] = np.log1p(peak) - np.log1p(valley)
+    # last row: mean valley across all bands
+    contrast[n_bands] = np.log1p(S.mean(axis=0))
+    return contrast
 
 
 def extract_features(y: np.ndarray, sr: int = SR) -> Dict[str, np.ndarray]:
     """Extract the 5 real-time features from a 1s audio chunk."""
-    S = np.abs(librosa.stft(y, n_fft=N_FFT, hop_length=HOP_LENGTH))
+    y_t = torch.from_numpy(y).float().unsqueeze(0)  # (1, samples)
 
-    mel = librosa.feature.melspectrogram(S=S ** 2, sr=sr, n_mels=N_MELS)
-    mel_db = librosa.power_to_db(mel, ref=np.max).astype(np.float32)
+    # Mel spectrogram → dB
+    mel_power = _mel_transform(y_t)        # (1, n_mels, T)
+    mel_db = _amp_to_db(mel_power)          # (1, n_mels, T)
+    mel_db_np = mel_db.squeeze(0).numpy()   # (128, T)
 
-    mfcc = librosa.feature.mfcc(
-        S=librosa.power_to_db(mel), sr=sr, n_mfcc=N_MFCC
-    ).astype(np.float32)
+    # MFCC
+    mfcc = _mfcc_transform(y_t)             # (1, n_mfcc, T)
+    mfcc_np = mfcc.squeeze(0).numpy()       # (13, T)
 
-    rms = librosa.feature.rms(
-        S=S, frame_length=N_FFT, hop_length=HOP_LENGTH
-    ).astype(np.float32)
+    # Magnitude spectrogram (for RMS, contrast)
+    spec = torch.stft(
+        y_t.squeeze(0), n_fft=N_FFT, hop_length=HOP_LENGTH,
+        win_length=N_FFT, window=torch.hann_window(N_FFT),
+        return_complex=True,
+    )  # (n_fft//2+1, T)
+    S_mag = spec.abs().numpy()  # (n_fft//2+1, T)
 
-    zcr = librosa.feature.zero_crossing_rate(
-        y, frame_length=N_FFT, hop_length=HOP_LENGTH
-    ).astype(np.float32)
+    # RMS energy from magnitude spectrogram
+    rms = np.sqrt((S_mag ** 2).mean(axis=0, keepdims=True)).astype(np.float32)  # (1, T)
 
-    contrast = librosa.feature.spectral_contrast(
-        S=S, sr=sr, n_fft=N_FFT, hop_length=HOP_LENGTH
-    ).astype(np.float32)
+    # Zero crossing rate  (frame-based, matching librosa convention)
+    sign_changes = np.abs(np.diff(np.signbit(y).astype(np.float32)))
+    pad_width = N_FFT // 2
+    padded = np.pad(sign_changes, (pad_width, pad_width), mode="constant")
+    n_frames = S_mag.shape[1]
+    zcr = np.zeros((1, n_frames), dtype=np.float32)
+    for f in range(n_frames):
+        start = f * HOP_LENGTH
+        end = start + N_FFT
+        if end <= len(padded):
+            zcr[0, f] = padded[start:end].mean()
+        else:
+            zcr[0, f] = padded[start:].mean() if start < len(padded) else 0.0
+
+    # Spectral contrast
+    contrast = _spectral_contrast(S_mag, sr=sr)  # (7, T)
 
     return {
-        "mel_spectrogram": mel_db,        # (128, T)
-        "mfcc": mfcc,                     # (13, T)
-        "rms_energy": rms,                # (1, T)
-        "zero_crossing_rate": zcr,        # (1, T)
-        "spectral_contrast": contrast,    # (7, T)
+        "mel_spectrogram": mel_db_np,      # (128, T)
+        "mfcc": mfcc_np,                   # (13, T)
+        "rms_energy": rms,                 # (1, T)
+        "zero_crossing_rate": zcr,         # (1, T)
+        "spectral_contrast": contrast,     # (7, T)
     }
 
 
@@ -176,8 +254,9 @@ class FullClipRollingDataset(Dataset):
         # Pre-extract features and targets
         self._features: List[Dict[str, np.ndarray]] = []
         self._targets: List[np.ndarray] = []
-        self._meta: List[Tuple[str, int, float, float]] = []
+        self._meta: List[Tuple[str, int, float, float, int]] = []
         self._clip_names: List[str] = []  # unique clip names in order
+        self._user_ids: List[int] = []    # user_id per window
 
         hop_samples = int(hop_sec * sr)
 
@@ -189,7 +268,10 @@ class FullClipRollingDataset(Dataset):
             if not videos or not annos:
                 continue
 
-            y_full, _ = librosa.load(str(videos[0]), sr=sr)
+            # For now, assign user_id=0 for all clips. Future: parse from clip_dir or metadata.
+            user_id = 0
+
+            y_full = load_audio(str(videos[0]), sr=sr)
             anno_t, angles = load_annotation_csv(annos[0])
 
             n_windows = max(0, (len(y_full) - self.window_samples) // hop_samples + 1)
@@ -216,7 +298,8 @@ class FullClipRollingDataset(Dataset):
 
                 self._features.append(feats)
                 self._targets.append(target)
-                self._meta.append((clip_name, w_idx, start_sec, end_sec))
+                self._meta.append((clip_name, w_idx, start_sec, end_sec, user_id))
+                self._user_ids.append(user_id)
 
             print(f"  [{ci + 1}/{len(clip_dirs)}] {clip_name}: {n_windows} windows")
 
@@ -242,7 +325,7 @@ class FullClipRollingDataset(Dataset):
     def __getitem__(self, index: int) -> Dict:
         feats_raw = self._features[index]
         target = self._targets[index]
-        clip_name, w_idx, start_sec, end_sec = self._meta[index]
+        clip_name, w_idx, start_sec, end_sec, user_id = self._meta[index]
 
         # Normalize
         feats = normalize_features(feats_raw, self.feature_stats)
@@ -261,6 +344,7 @@ class FullClipRollingDataset(Dataset):
             "window_idx": w_idx,
             "start_sec": start_sec,
             "end_sec": end_sec,
+            "user_id": user_id,
         }
 
     # ------------------------------------------------------------------
@@ -295,15 +379,18 @@ class FullClipRollingDataset(Dataset):
 def rolling_collate(batch: List[Dict]) -> Dict:
     x_list = [item["x"] for item in batch]
     y_list = [item["y"] for item in batch]
+    user_id_list = [item["user_id"] for item in batch]
 
     x_out = {}
     for k in x_list[0].keys():
         x_out[k] = torch.stack([d[k] for d in x_list], dim=0)
 
     y_out = torch.stack(y_list, dim=0)
+    user_id_out = torch.tensor(user_id_list, dtype=torch.long)
     return {
         "x": x_out,
         "y": y_out,
+        "user_id": user_id_out,
         "clip_name": [item["clip_name"] for item in batch],
         "window_idx": [item["window_idx"] for item in batch],
     }

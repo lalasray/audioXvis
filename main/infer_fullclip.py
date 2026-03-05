@@ -19,6 +19,7 @@ from dataloader_fullclip import (
     extract_features,
     normalize_features,
     load_annotation_csv,
+    load_audio,
     SR,
     HOP_LENGTH,
     VIDEO_FPS,
@@ -216,8 +217,6 @@ def main():
             if d.is_dir() and (d / "video").is_dir() and (d / "annotation").is_dir()
         )
 
-    import librosa
-
     all_maes = {"angle_a": [], "angle_b": [], "angle_c": []}
 
     for idx, clip_dir in enumerate(clip_dirs, 1):
@@ -230,7 +229,8 @@ def main():
 
         print(f"\n[{idx}/{len(clip_dirs)}] {clip_name}")
 
-        y_full, sr = librosa.load(str(videos[0]), sr=SR)
+        y_full = load_audio(str(videos[0]), sr=SR)
+        sr = SR
         print(f"  Audio: {len(y_full) / sr:.2f}s")
 
         gt_t, gt_angles = load_annotation_csv(annos[0])

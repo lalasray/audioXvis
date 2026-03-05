@@ -274,9 +274,12 @@ class ConditionalDenoiser(nn.Module):
         hidden_dim: int = 512,
         n_blocks: int = 4,
         dropout: float = 0.1,
+        num_users: int = 1,
+        user_embed_dim: int = 32,
     ):
         super().__init__()
         self.t_embed_dim = t_embed_dim
+        self.user_embed_dim = user_embed_dim
 
         # Timestep → hidden
         self.t_proj = nn.Sequential(
@@ -289,9 +292,12 @@ class ConditionalDenoiser(nn.Module):
         # Noisy target → hidden
         self.y_proj = nn.Linear(y_dim, hidden_dim)
 
-        # Residual blocks conditioned via AdaLN on (t + x_cond)
+        # User embedding
+        self.user_embed = nn.Embedding(num_users, user_embed_dim)
+
+        # Residual blocks conditioned via AdaLN on (t + x_cond + user_emb)
         self.blocks = nn.ModuleList(
-            [ResMLPBlock(hidden_dim, hidden_dim, dropout) for _ in range(n_blocks)]
+            [ResMLPBlock(hidden_dim, hidden_dim + user_embed_dim, dropout) for _ in range(n_blocks)]
         )
 
         self.out_norm = nn.LayerNorm(hidden_dim)
@@ -302,9 +308,12 @@ class ConditionalDenoiser(nn.Module):
         x_cond: torch.Tensor,
         y_noisy: torch.Tensor,
         t: torch.Tensor,
+        user_id: torch.Tensor,
     ) -> torch.Tensor:
         t_emb = timestep_embedding(t, self.t_embed_dim)
-        cond = self.t_proj(t_emb) + self.x_proj(x_cond)  # fuse time + audio
+        cond_base = self.t_proj(t_emb) + self.x_proj(x_cond)  # fuse time + audio
+        user_emb = self.user_embed(user_id)  # (B, user_embed_dim)
+        cond = torch.cat([cond_base, user_emb], dim=-1)
 
         h = self.y_proj(y_noisy)
         for block in self.blocks:
@@ -349,6 +358,8 @@ class DiffusionRegressor(nn.Module):
             hidden_dim=hidden_dim,
             n_blocks=n_denoiser_blocks,
             dropout=dropout,
+            num_users=1,           # For now, single user
+            user_embed_dim=32,     # Can be tuned
         )
 
         # Cosine noise schedule (clamp alpha_bars away from 0 for stable DDIM)
@@ -364,12 +375,15 @@ class DiffusionRegressor(nn.Module):
         a_bar = self.alpha_bars[t].unsqueeze(1)
         return torch.sqrt(a_bar) * y0 + torch.sqrt(1.0 - a_bar) * noise
 
-    def predict_noise(self, x_dict, y_noisy, t):
+    def predict_noise(self, x_dict, y_noisy, t, user_id=None):
         x_cond = self.encoder(x_dict)
-        return self.denoiser(x_cond, y_noisy, t)
+        if user_id is None:
+            # Default to user 0
+            user_id = torch.zeros(x_cond.shape[0], dtype=torch.long, device=x_cond.device)
+        return self.denoiser(x_cond, y_noisy, t, user_id)
 
     @torch.no_grad()
-    def sample_ddim(self, x_dict, sample_steps: int) -> torch.Tensor:
+    def sample_ddim(self, x_dict, sample_steps, user_id=None) -> torch.Tensor:
         first_t = next(iter(x_dict.values()))
         device = first_t.device
         B = first_t.shape[0]
@@ -383,7 +397,7 @@ class DiffusionRegressor(nn.Module):
         for i in range(len(ts)):
             t = ts[i]
             t_batch = torch.full((B,), int(t.item()), device=device, dtype=torch.long)
-            eps = self.denoiser(x_cond, y, t_batch)
+            eps = self.denoiser(x_cond, y, t_batch, user_id)
 
             a_bar = self.alpha_bars[t].clamp(min=1e-4)
             sqrt_ab = torch.sqrt(a_bar)
@@ -479,8 +493,9 @@ def evaluate(
     for batch in loader:
         x = move_dict(batch["x"], device)
         y = batch["y"].to(device)  # raw angles from dataset
+        user_id = batch["user_id"].to(device) if "user_id" in batch else None
 
-        pred_norm = model.sample_ddim(x, sample_steps=sample_steps)
+        pred_norm = model.sample_ddim(x, sample_steps, user_id)
         pred = pred_norm * y_std + y_mean  # un-normalize prediction
 
         # y is already raw angles; pred is now un-normalized → compare directly
