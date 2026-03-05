@@ -2,7 +2,7 @@
 
 import argparse
 
-from audi_extract import batch_extract_audio
+from audio_extract import batch_extract_audio
 
 
 def main() -> None:

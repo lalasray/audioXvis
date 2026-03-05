@@ -14,3 +14,4 @@ gt_s6_05.csv
 /main/__pycache__
 *.pt
 /main/checkpoints
+

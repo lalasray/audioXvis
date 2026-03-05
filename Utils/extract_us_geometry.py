@@ -6,15 +6,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 
-
-def load_points(csv_path: str) -> np.ndarray:
-    points = np.loadtxt(csv_path, delimiter=",")
-    points = np.atleast_2d(points)
-    if points.shape[1] != 10:
-        raise ValueError(
-            f"Annotation CSV must have 10 columns (5 x,y points). Got {points.shape[1]} columns."
-        )
-    return points.reshape(-1, 5, 2).astype(np.float32)
+from annotation_utils import interpolate_points_to_frame_count, load_points_csv
 
 
 def get_video_frame_count(video_path: str) -> int:
@@ -26,38 +18,6 @@ def get_video_frame_count(video_path: str) -> int:
     if frame_count <= 0:
         raise RuntimeError("Could not read frame count from video.")
     return frame_count
-
-
-def interpolate_points_to_frame_count(points: np.ndarray, target_frames: int) -> np.ndarray:
-    n_frames, n_pts, _ = points.shape
-    if target_frames <= 1:
-        return points[:1].copy()
-
-    t_src = np.arange(n_frames, dtype=np.float32)
-    t_dst = np.linspace(0.0, n_frames - 1, target_frames, dtype=np.float32)
-
-    dense = np.zeros((target_frames, n_pts, 2), dtype=np.float32)
-
-    for p in range(n_pts):
-        valid = ~np.isclose(points[:, p, 0], 0.0) | ~np.isclose(points[:, p, 1], 0.0)
-        if not np.any(valid):
-            continue
-
-        src_valid_t = t_src[valid]
-
-        for axis in range(2):
-            signal = points[:, p, axis]
-            src_valid_v = signal[valid]
-
-            filled = np.interp(t_src, src_valid_t, src_valid_v)
-            interp = np.interp(t_dst, t_src, filled)
-
-            interp[t_dst < src_valid_t[0]] = src_valid_v[0]
-            interp[t_dst > src_valid_t[-1]] = src_valid_v[-1]
-
-            dense[:, p, axis] = interp
-
-    return dense
 
 
 def safe_norm(vec: np.ndarray, eps: float = 1e-8) -> float:
@@ -174,7 +134,7 @@ def main():
 
     args = parser.parse_args()
 
-    points = load_points(args.annotation_csv)
+    points = load_points_csv(args.annotation_csv)
     output_csv = ensure_output_contains_video_name(args.output_csv, args.input_video)
 
     if args.input_video:

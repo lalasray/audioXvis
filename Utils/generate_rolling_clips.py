@@ -21,26 +21,23 @@ python generate_rolling_clips.py --audio-dir /path/to/audio/ --output-dir ./clip
 
 """
 import argparse
-import os
 from pathlib import Path
 import librosa
 import numpy as np
 import soundfile as sf
 import math
-import shutil
 import subprocess
+
+from media_utils import AUDIO_EXTS, VIDEO_EXTS, get_video_duration_ffprobe, resolve_ffmpeg_path, resolve_ffprobe_path
 
 
 def find_media_files(input_dir, media_type='auto'):
-    audio_exts = ['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg']
-    video_exts = ['.mp4', '.mov', '.mkv', '.avi', '.webm', '.flv', '.wmv', '.m4v']
-
     if media_type == 'audio':
-        exts = audio_exts
+        exts = AUDIO_EXTS
     elif media_type == 'video':
-        exts = video_exts
+        exts = VIDEO_EXTS
     else:
-        exts = audio_exts + video_exts
+        exts = AUDIO_EXTS + VIDEO_EXTS
 
     p = Path(input_dir)
     files = []
@@ -52,45 +49,11 @@ def find_media_files(input_dir, media_type='auto'):
     media_map = {}
     for f in files:
         suffix = f.suffix.lower()
-        if suffix in video_exts:
+        if suffix in VIDEO_EXTS:
             media_map[f] = 'video'
         else:
             media_map[f] = 'audio'
     return files, media_map
-
-
-def resolve_ffmpeg_path(ffmpeg_path=None):
-    if ffmpeg_path:
-        return ffmpeg_path
-
-    possible_paths = [
-        'ffmpeg',
-        '/usr/bin/ffmpeg',
-        '/usr/local/bin/ffmpeg',
-        os.path.expanduser('~/miniconda3/bin/ffmpeg'),
-        os.path.expanduser('~/miniconda3/envs/audio2vis/bin/ffmpeg'),
-        '/home/lala/miniconda3/envs/audio2vis/bin/ffmpeg'
-    ]
-    for path in possible_paths:
-        if path == 'ffmpeg' and shutil.which('ffmpeg'):
-            return 'ffmpeg'
-        if os.path.exists(path):
-            return path
-    return None
-
-
-def get_video_duration(video_path, ffprobe_path='ffprobe'):
-    cmd = [
-        ffprobe_path,
-        '-v', 'error',
-        '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
-        str(video_path)
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f'Unable to read duration for {video_path}')
-    return float(result.stdout.strip())
 
 
 def compute_durations(files, media_map, sr=None, ffprobe_path='ffprobe'):
@@ -98,7 +61,7 @@ def compute_durations(files, media_map, sr=None, ffprobe_path='ffprobe'):
     for f in files:
         kind = media_map.get(f, 'audio')
         if kind == 'video':
-            dur = get_video_duration(f, ffprobe_path=ffprobe_path)
+            dur = get_video_duration_ffprobe(f, ffprobe_path=ffprobe_path)
         else:
             try:
                 # librosa.get_duration can read file without loading full audio
@@ -204,8 +167,7 @@ def main():
         if ffmpeg_path is None:
             print('Video files detected but ffmpeg was not found. Install ffmpeg or pass --ffmpeg-path.')
             return
-        if ffmpeg_path != 'ffmpeg':
-            ffprobe_path = str(Path(ffmpeg_path).with_name('ffprobe'))
+        ffprobe_path = resolve_ffprobe_path(ffmpeg_path)
 
     print(f'Found {len(files)} media files. Computing durations...')
     durations = compute_durations(files, media_map, sr=args.sr, ffprobe_path=ffprobe_path)
