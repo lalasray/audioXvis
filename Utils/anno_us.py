@@ -1,3 +1,5 @@
+"""Interactive tool to manually annotate five ultrasound landmark points per sampled frame."""
+
 import string
 import cv2
 import numpy as np

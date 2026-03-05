@@ -1,3 +1,5 @@
+"""Load paired audio feature clips and angle annotations for training and inference."""
+
 from __future__ import annotations
 
 import csv
@@ -282,7 +284,7 @@ def create_audio_angles_dataloader(
 
 
 if __name__ == "__main__":
-	root = "/home/lala/Documents/GitHub/audioXvis/data/test_dataset/sliding_1s_hop_0p1_all"
+	root = "data/test_dataset/sliding_1s_hop_0p1_all"
 	dataset, loader = create_audio_angles_dataloader(
 		root_dir=root,
 		batch_size=4,

@@ -1,3 +1,5 @@
+"""Render side-by-side video showing raw ultrasound frames and extracted geometry overlays."""
+
 import argparse
 import csv
 from pathlib import Path

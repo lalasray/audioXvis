@@ -1,3 +1,5 @@
+"""Generate sliding-window video clips and aligned annotation CSV clips for model datasets."""
+
 import argparse
 import csv
 import math

@@ -1,3 +1,5 @@
+"""Train a realtime conditional diffusion regressor from audio features to larynx angles."""
+
 from __future__ import annotations
 
 import argparse
@@ -393,7 +395,7 @@ def train(cfg: TrainConfig) -> None:
 
 def parse_args() -> TrainConfig:
     parser = argparse.ArgumentParser(description="Realtime diffusion-based regression training for audio->larynx angles")
-    parser.add_argument("--data_root", type=str, default="/home/lala/Documents/GitHub/audioXvis/data/test_dataset/sliding_1s_hop_0p1_all")
+    parser.add_argument("--data_root", type=str, default="data/test_dataset/sliding_1s_hop_0p1_all")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--lr", type=float, default=1e-3)

@@ -1,3 +1,5 @@
+"""Visualize ultrasound landmark annotations and derived larynx-style shape overlays over video."""
+
 import argparse
 import cv2
 import numpy as np

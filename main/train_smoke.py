@@ -1,3 +1,5 @@
+"""Run a one-step smoke training check on test-dataset features and targets."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,7 +12,7 @@ from dataloader import create_audio_angles_dataloader
 
 
 def main() -> None:
-    root = Path("/home/lala/Documents/GitHub/audioXvis/data/test_dataset/sliding_1s_hop_0p1_all")
+    root = Path("data/test_dataset/sliding_1s_hop_0p1_all")
 
     dataset, loader = create_audio_angles_dataloader(
         root_dir=root,

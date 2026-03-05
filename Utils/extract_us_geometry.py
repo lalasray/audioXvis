@@ -1,3 +1,5 @@
+"""Extract frame-wise triangle geometry and angles from 5-point ultrasound annotations."""
+
 import argparse
 import csv
 import cv2
