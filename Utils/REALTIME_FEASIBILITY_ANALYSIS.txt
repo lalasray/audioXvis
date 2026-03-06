@@ -1,0 +1,59 @@
+REAL-TIME FEASIBILITY ANALYSIS
+===============================
+Audio-to-Larynx-Angle inference pipeline for 1-second windows.
+
+TIMING BUDGET (per 1-second window)
+------------------------------------
+
+Stage                 What                                        GPU        CPU
+-------------------   -----------------------------------------   --------   --------
+Audio capture         1s buffer from mic/stream                   1000ms     1000ms
+Feature extraction    STFT -> mel, RMS, ZCR, spectral contrast,   ~2-3ms     ~2-3ms
+                      MFCC (all share one STFT computation)
+CNN encoder           5 Conv1d branches -> fusion MLP              ~1ms       ~5ms
+DDIM sampling         20 denoising steps (small MLP, 3-dim out)    ~3ms      ~15ms
+-------------------   -----------------------------------------   --------   --------
+TOTAL INFERENCE                                                    ~6ms      ~23ms
+
+Result: ~950ms of slack per 1-second window. Comfortably real-time.
+
+
+MODEL ARCHITECTURE (already designed for real-time)
+----------------------------------------------------
+- FeatureCNNEncoder: 5 small Conv1d branches (64 channels each)
+    -> AdaptiveAvgPool1d(1) -> Linear projection -> SiLU
+    -> concatenate -> fusion MLP
+- ConditionalDenoiser: 4-layer MLP (512 -> 512 -> 256 -> 3)
+- DDIM sampler: 20 steps on 3-dimensional output (angle_a, angle_b, angle_c)
+- Output: 3 angles per 1-second window
+
+
+RECOMMENDED FEATURES FOR REAL-TIME (all frame-local, safe for 1s windows)
+--------------------------------------------------------------------------
+Feature              Correlation   Computation        Approx Time
+-----------------    -----------   -----------------  -----------
+Mel Spectrogram      0.443         Mel filterbank     <0.5ms
+MFCC_0               0.443         DCT of mel spec    <0.1ms  (redundant with mel)
+RMS Energy           0.423         Squared mean       <0.1ms
+Zero Crossing Rate   0.421         Sign-change count  <0.1ms
+Spectral Contrast    0.407         Band peak/valley   <0.5ms
+
+All features share a single STFT computation (~1ms for 1s @ 22050 Hz).
+
+
+PRODUCTION REAL-TIME OPTIMIZATIONS
+------------------------------------
+1. Ring buffer: capture audio in 1s chunks (or sliding with overlap)
+2. Replace librosa with torchaudio or raw numpy FFT to avoid overhead
+   and stay in tensor land (eliminates numpy<->torch copies)
+3. Keep model on GPU with torch.no_grad() (already done in sample_ddim)
+4. Optionally reduce DDIM steps from 20 -> 5 for even faster inference
+   (~1ms GPU, slight quality tradeoff)
+5. Batch multiple windows if processing pre-recorded audio for throughput
+
+
+FEATURES TO AVOID IN REAL-TIME 1s WINDOWS
+-------------------------------------------
+- Tempogram: needs ~9s context, meaningless at 1s
+- HPSS / Harmonic ratio: median filtering across time degrades at 1s
+- Onset strength: boundary reset artifacts every 1s

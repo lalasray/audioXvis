@@ -1,6 +1,10 @@
+"""Visualize ultrasound landmark annotations and derived larynx-style shape overlays over video."""
+
 import argparse
 import cv2
 import numpy as np
+
+from annotation_utils import interpolate_points_to_frame_count, load_points_csv
 
 
 def load_video_frames(video_path: str, crop: bool = True):
@@ -28,18 +32,6 @@ def load_video_frames(video_path: str, crop: bool = True):
     return frames, original_fps
 
 
-def load_points(csv_path: str) -> np.ndarray:
-    points = np.loadtxt(csv_path, delimiter=",")
-    points = np.atleast_2d(points)
-
-    if points.shape[1] != 10:
-        raise ValueError(
-            f"Annotation CSV must have 10 columns (5 x,y points). Got {points.shape[1]} columns."
-        )
-
-    return points.reshape(-1, 5, 2)
-
-
 def _norm(vec: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     mag = np.linalg.norm(vec)
     if mag < eps:
@@ -50,38 +42,6 @@ def _norm(vec: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 def _bezier_quad(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, n: int = 40) -> np.ndarray:
     t = np.linspace(0.0, 1.0, n, dtype=np.float32)[:, None]
     return (1 - t) ** 2 * p0 + 2 * (1 - t) * t * p1 + (t ** 2) * p2
-
-
-def interpolate_points_to_frame_count(points: np.ndarray, target_frames: int) -> np.ndarray:
-    """Interpolate sparse landmark tracks to match original video frame count."""
-    n_frames, n_pts, _ = points.shape
-    t_src = np.arange(n_frames, dtype=np.float32)
-    t_dst = np.linspace(0.0, n_frames - 1, target_frames, dtype=np.float32)
-
-    dense = np.zeros((len(t_dst), n_pts, 2), dtype=np.float32)
-
-    for p in range(n_pts):
-        for axis in range(2):
-            signal = points[:, p, axis].astype(np.float32)
-            valid = ~np.isclose(points[:, p, 0], 0.0) | ~np.isclose(points[:, p, 1], 0.0)
-
-            if not np.any(valid):
-                continue
-
-            src_valid_t = t_src[valid]
-            src_valid_v = signal[valid]
-
-            filled = np.interp(t_src, src_valid_t, src_valid_v)
-            interp = np.interp(t_dst, t_src, filled)
-
-            first_valid = src_valid_t[0]
-            last_valid = src_valid_t[-1]
-            interp[t_dst < first_valid] = src_valid_v[0]
-            interp[t_dst > last_valid] = src_valid_v[-1]
-
-            dense[:, p, axis] = interp
-
-    return dense
 
 
 def draw_dotted_line(
@@ -330,7 +290,7 @@ def main():
     args = parser.parse_args()
 
     frames, original_fps = load_video_frames(args.input_video, crop=not args.no_crop)
-    points = load_points(args.annotation_csv)
+    points = load_points_csv(args.annotation_csv)
 
     if len(frames) == 0:
         raise RuntimeError("No frames loaded from video after sampling.")

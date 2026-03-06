@@ -1,0 +1,52 @@
+Feature Windowing Analysis: 1-Second Windows + Merge
+=====================================================
+
+Which audio features are safe to compute on 1-second windows and then
+concatenate, vs. which features require longer temporal context and will
+produce different (degraded) results.
+
+All features use hop_length=512, n_fft=2048, sr=22050 (~93ms STFT window).
+
+
+SAFE — Won't change (frame-local features)
+-------------------------------------------
+
+Feature              Why it's safe
+-----------------    --------------------------------------------------
+RMS Energy           Per-frame amplitude, 93ms window
+Pitch (F0/YIN)       YIN is local per-frame
+Spectral Centroid    Per-frame STFT
+Spectral Rolloff     Per-frame STFT
+Zero Crossing Rate   Per-frame count
+Mel Spectrogram      Per-frame STFT -> mel filterbank
+MFCC                 Per-frame, derived from mel spectrogram
+Chroma               Per-frame STFT -> pitch class mapping
+Spectral Contrast    Per-frame STFT bands
+
+Each frame only depends on a short STFT analysis window (~93ms), so
+splitting audio into 1s chunks and concatenating the feature frames
+gives the same result (minor edge effects at boundaries only).
+
+
+NOT SAFE — Will change (context-dependent features)
+-----------------------------------------------------
+
+Feature              Why it breaks
+-----------------    --------------------------------------------------
+Tempogram            Requires autocorrelation over ~384 frames (~9 seconds
+                     of context). A 1s window is far too short and produces
+                     meaningless tempo estimates.
+
+Harmonic Ratio       Harmonic/percussive separation (HPSS) uses median
+(HPSS)               filtering across time. With only 1s of context the
+                     separation quality degrades significantly.
+
+Onset Strength       Computed as temporal difference of mel spectrogram
+                     frames. At each 1s boundary the first frame has no
+                     previous frame to diff against, creating a reset
+                     artifact every second.
+
+
+Summary: 9 of 12 features are purely frame-local and will be identical.
+Tempogram, HPSS/harmonic ratio, and onset strength need longer temporal
+context and will produce different (degraded) results from 1-second windows.

@@ -1,9 +1,13 @@
+"""Render side-by-side video showing raw ultrasound frames and extracted geometry overlays."""
+
 import argparse
 import csv
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+from media_utils import get_video_capture_props
 
 
 REQUIRED_COLUMNS = [
@@ -50,27 +54,6 @@ def load_geometry_csv(csv_path: str):
         raise ValueError("Geometry CSV contains no data rows.")
 
     return rows
-
-
-def get_video_props(video_path: str):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0:
-        fps = 30.0
-
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    if width <= 0 or height <= 0:
-        cap.release()
-        raise RuntimeError("Could not read video width/height.")
-
-    cap.release()
-    return fps, width, height, frame_count
 
 
 def get_output_path(output_video: str | None, input_video: str, geometry_csv: str) -> str:
@@ -260,7 +243,7 @@ def main():
     args = parser.parse_args()
 
     geometry_rows = load_geometry_csv(args.geometry_csv)
-    fps, width, height, video_frames = get_video_props(args.input_video)
+    fps, width, height, video_frames, _ = get_video_capture_props(args.input_video)
 
     total_frames = min(video_frames, len(geometry_rows))
     if total_frames <= 0:

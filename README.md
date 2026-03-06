@@ -4,6 +4,9 @@ Tools for ultrasound-based vocal tract/larynx analysis using manually annotated 
 
 ## Project Overview
 
+Current runnable defaults in this repo are scoped to `data/test_dataset`.
+The larger `data/dataset` tree is kept intact for archival/reference and is not used by default scripts.
+
 This repository includes:
 
 - Ultrasound/video datasets and annotation CSV files.
