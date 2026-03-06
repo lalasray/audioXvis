@@ -14,6 +14,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import csv
 
 from dataloader_fullclip import (
     extract_features,
@@ -87,6 +88,7 @@ def infer_full_clip(
     device: torch.device,
     feature_stats: Dict | None = None,
     batch_size: int = 64,
+    save_pred_csv: str = None,
 ):
     """Slide 1s windows, extract + normalize features, infer, return predictions."""
     window_samples = int(window_sec * sr)
@@ -126,7 +128,9 @@ def infer_full_clip(
 
         x_dict = {k: torch.stack(v, dim=0).to(device) for k, v in batch_features.items()}
 
-        pred_norm = model.sample_ddim(x_dict, sample_steps=sample_steps)
+        # Supply user_id tensor (single user: 0)
+        user_id = torch.zeros(x_dict["mel_spectrogram"].shape[0], dtype=torch.long, device=device)
+        pred_norm = model.sample_ddim(x_dict, sample_steps=sample_steps, user_id=user_id)
         pred = pred_norm * y_std + y_mean
 
         pred_a = pred[:, 0].cpu().numpy()
@@ -138,6 +142,15 @@ def infer_full_clip(
 
     centers = np.array([p[0] for p in all_preds])
     pred_angles = np.array([[p[1], p[2], p[3]] for p in all_preds])
+
+    # Save predicted angles to CSV if requested
+    if save_pred_csv is not None:
+        with open(save_pred_csv, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["frame", "time", "angle_a", "angle_b", "angle_c"])
+            for idx, (center_sec, a, b, c) in enumerate(all_preds):
+                writer.writerow([idx, center_sec, a, b, c])
+
     return centers, pred_angles
 
 
@@ -236,6 +249,7 @@ def main():
         gt_t, gt_angles = load_annotation_csv(annos[0])
         print(f"  GT: {len(gt_t)} frames, {gt_t[-1]:.2f}s")
 
+        pred_csv_path = out_dir / f"{clip_name}_pred_angles.csv"
         pred_t, pred_angles = infer_full_clip(
             model=model,
             y_full=y_full,
@@ -248,6 +262,7 @@ def main():
             device=device,
             feature_stats=feature_stats,
             batch_size=args.batch_size,
+            save_pred_csv=str(pred_csv_path),
         )
         print(f"  Predicted: {len(pred_t)} windows")
 
