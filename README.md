@@ -236,6 +236,32 @@ Script:
 
 This is for non-realtime full-sequence inference and visualization, while `main/infer_realtime.py` is for live/streaming-style prediction.
 
+### Use a real 3D larynx mesh in realtime
+
+`main/realtime_mesh_driver.py` supports mesh files such as `.obj/.ply/.stl/.glb/.gltf`.
+
+If your source model is `.fbx`, convert it first:
+
+```bash
+source /home/lala/miniconda3/etc/profile.d/conda.sh
+conda activate audio2vis
+python -u main/convert_mesh.py \
+  --input /home/lala/Documents/GitHub/audioXvis/data/model/anatomy-of-the-larynx/source/maya2sketchfab.fbx.fbx \
+  --output /home/lala/Documents/GitHub/audioXvis/data/model/anatomy-of-the-larynx/source/maya2sketchfab.obj
+```
+
+Then run realtime mesh driving:
+
+```bash
+python -u main/realtime_mesh_driver.py \
+  --ckpt main/checkpoints/diffusion_v2/best.pt \
+  --mesh /home/lala/Documents/GitHub/audioXvis/data/model/anatomy-of-the-larynx/source/maya2sketchfab.obj
+```
+
+Notes:
+- If Blender is installed as snap and conversion fails due confinement/AppArmor, install a non-snap Blender build and rerun conversion.
+- Without `--mesh`, `realtime_mesh_driver.py` falls back to the deforming color-gradient triangle.
+
 ## License
 
 See `LICENSE`.
