@@ -227,7 +227,11 @@ This is for non-realtime full-sequence inference and visualization, while `main/
 
 ### Use a real 3D larynx mesh in realtime
 
-`main/realtime_mesh_driver.py` supports mesh files such as `.obj/.ply/.stl/.glb/.gltf`.
+`main/realtime_mesh_driver.py` supports:
+
+- Single mesh mode (`--mesh`)
+- Two-mesh blend mode (`--mesh_i` + `--mesh_o`, requires identical topology/order)
+- Sequence animation mode (`--mesh_seq_glob`, for frame sequences like `o00050001.obj ... o00050050.obj`)
 
 If your source model is `.fbx`, convert it first:
 
@@ -247,9 +251,66 @@ python -u main/realtime_mesh_driver.py \
   --mesh /home/lala/Documents/GitHub/audioXvis/data/model/anatomy-of-the-larynx/source/maya2sketchfab.obj
 ```
 
+Sequence animation example (angle -> frame mapping):
+
+```bash
+python -u main/realtime_mesh_driver.py \
+  --ckpt main/checkpoints/diffusion_v2/best.pt \
+  --mesh_seq_glob "data/model/anatomy-of-the-larynx/source/o*.obj" \
+  --mtl_source_obj data/model/anatomy-of-the-larynx/source/o00050001.obj \
+  --blend_angle_source mean_ab \
+  --blend_min_deg 0 --blend_max_deg 90 \
+  --seq_min_frame 1 --seq_max_frame 50 \
+  --seq_neutral_deg 60 --seq_neutral_frame 25
+```
+
 Notes:
 - If Blender is installed as snap and conversion fails due confinement/AppArmor, install a non-snap Blender build and rerun conversion.
 - Without `--mesh`, `realtime_mesh_driver.py` falls back to the deforming color-gradient triangle.
+- For `--mesh_i/--mesh_o` and `--mesh_seq_glob`, all meshes must have identical vertex count/order for interpolation.
+
+### Hybrid Realtime Driver (ML + Audio Level)
+
+Script:
+
+- `main/realtime_mesh_driver_hybrid.py`
+
+This driver mixes:
+
+- `50%` ML prediction signal (angle-based frame mapping)
+- `50%` audio-level signal (low level -> frame 1, high level -> frame 50)
+
+Default hybrid weight:
+
+- `--hybrid_aux_weight 0.5`
+
+Microphone example:
+
+```bash
+python -u main/realtime_mesh_driver_hybrid.py \
+  --ckpt main/checkpoints/diffusion_v2/best.pt \
+  --mesh_seq_glob "data/model/anatomy-of-the-larynx/source/o*.obj" \
+  --mtl_source_obj data/model/anatomy-of-the-larynx/source/o00050001.obj \
+  --blend_angle_source mean_ab \
+  --blend_min_deg 0 --blend_max_deg 90 \
+  --seq_min_frame 1 --seq_max_frame 50 \
+  --seq_neutral_deg 60 --seq_neutral_frame 25 \
+  --hybrid_aux_weight 0.5
+```
+
+Audio stream example:
+
+```bash
+python -u main/realtime_mesh_driver_hybrid.py \
+  --ckpt main/checkpoints/diffusion_v2/best.pt \
+  --mesh_seq_glob "data/model/anatomy-of-the-larynx/source/o*.obj" \
+  --mtl_source_obj data/model/anatomy-of-the-larynx/source/o00050001.obj \
+  --audio /home/lala/Documents/GitHub/audioXvis/data/test.aac
+```
+
+Decoder note:
+
+- If `torchaudio` cannot decode `.aac`, the hybrid script automatically falls back to `ffmpeg` decoding.
 
 ## License
 

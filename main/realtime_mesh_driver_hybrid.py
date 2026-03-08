@@ -1,9 +1,9 @@
 """
 Realtime sequence-mesh driver with hybrid control:
   - 50% ML predicted angle signal
-  - 50% audio loudness signal
+  - 50% audio level signal
 
-Silence maps to frame 1, loud speech/singing pushes toward frame 50.
+Low level maps to frame 1, high level pushes toward frame 50.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ class StreamState:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Realtime sequence mesh with ML+loudness hybrid control")
+    p = argparse.ArgumentParser(description="Realtime sequence mesh with ML+audio-level hybrid control")
     p.add_argument("--ckpt", type=str, default="main/checkpoints/diffusion_v2/best.pt", help="Model checkpoint")
     p.add_argument("--mesh_seq_glob", type=str, required=True, help="Glob pattern for frame sequence, e.g. data/model/.../o*.obj")
     p.add_argument("--mtl_source_obj", type=str, default=None, help="OBJ path to source MTL colors from")
@@ -78,9 +78,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seq_neutral_frame", type=float, default=25.0, help="Neutral frame for ML mapping")
     p.add_argument("--seq_neutral_deg", type=float, default=60.0, help="Neutral ML angle value")
 
-    p.add_argument("--hybrid_loudness_weight", type=float, default=0.5, help="Weight of loudness in [0,1], default 0.5")
-    p.add_argument("--loud_floor_db", type=float, default=-55.0, help="Loudness floor in dBFS -> frame min")
-    p.add_argument("--loud_ceil_db", type=float, default=-15.0, help="Loudness ceiling in dBFS -> frame max")
+    p.add_argument("--hybrid_aux_weight", type=float, default=0.5, help="Weight of audio-level signal in [0,1], default 0.5")
+    p.add_argument("--aux_floor_db", type=float, default=-55.0, help="Audio level floor in dBFS -> frame min")
+    p.add_argument("--aux_ceil_db", type=float, default=-15.0, help="Audio level ceiling in dBFS -> frame max")
     return p.parse_args()
 
 
@@ -199,7 +199,7 @@ def map_angle_to_frame(angle_val: float, min_deg: float, neutral_deg: float, max
     return neutral_frame + t * (max_frame - neutral_frame)
 
 
-def loudness_norm_db(window: np.ndarray, floor_db: float, ceil_db: float) -> tuple[float, float]:
+def aux_level_norm_db(window: np.ndarray, floor_db: float, ceil_db: float) -> tuple[float, float]:
     rms = float(np.sqrt(np.mean(np.square(window)) + 1e-12))
     db = 20.0 * np.log10(max(rms, 1e-12))
     v = (db - floor_db) / max(ceil_db - floor_db, 1e-6)
@@ -220,14 +220,14 @@ def make_audio_callback(state: StreamState):
 
 
 def inference_worker(state: StreamState, model, y_mean, y_std, sample_steps: int, feature_stats,
-                     user_id: int, loud_floor_db: float, loud_ceil_db: float):
+                     user_id: int, aux_floor_db: float, aux_ceil_db: float):
     while not state.stop_event.is_set():
         try:
             y_window = state.inf_queue.get(timeout=0.2)
         except queue.Empty:
             continue
         try:
-            loud_norm, loud_db = loudness_norm_db(y_window, loud_floor_db, loud_ceil_db)
+            aux_norm, aux_db = aux_level_norm_db(y_window, aux_floor_db, aux_ceil_db)
             y_window_resampled = torchaudio.functional.resample(torch.from_numpy(y_window), SR_MIC, SR_MODEL).numpy()
             feats = extract_features(y_window_resampled, sr=SR_MODEL)
             if feature_stats is not None:
@@ -241,9 +241,9 @@ def inference_worker(state: StreamState, model, y_mean, y_std, sample_steps: int
             c = float(pred[0, 1].item())
             b = 180.0 - a - c
 
-            print(f"Pred: a={a:.2f}, b={b:.2f}, c={c:.2f} | loud={loud_db:.1f} dB ({loud_norm:.2f})")
+            print(f"Pred: a={a:.2f}, b={b:.2f}, c={c:.2f} | aux={aux_db:.1f} dB ({aux_norm:.2f})")
             try:
-                state.pose_queue.put((a, b, c, loud_norm), block=False)
+                state.pose_queue.put((a, b, c, aux_norm), block=False)
             except queue.Full:
                 pass
         except Exception as exc:
@@ -344,10 +344,10 @@ def main():
 
     threading.Thread(
         target=inference_worker,
-        args=(
-            state, model, y_mean, y_std, sample_steps, feature_stats, args.user_id,
-            args.loud_floor_db, args.loud_ceil_db,
-        ),
+            args=(
+                state, model, y_mean, y_std, sample_steps, feature_stats, args.user_id,
+                args.aux_floor_db, args.aux_ceil_db,
+            ),
         daemon=True,
     ).start()
 
@@ -376,7 +376,7 @@ def main():
     plotter.show(auto_close=False, interactive_update=True)
 
     alpha = float(np.clip(args.smooth_alpha, 0.0, 1.0))
-    loud_w = float(np.clip(args.hybrid_loudness_weight, 0.0, 1.0))
+    aux_w = float(np.clip(args.hybrid_aux_weight, 0.0, 1.0))
     smoothed = np.array([args.seq_neutral_deg, args.seq_neutral_deg, args.seq_neutral_deg], dtype=np.float32)
 
     try:
@@ -393,7 +393,7 @@ def main():
                 except queue.Empty:
                     break
             if latest is not None:
-                a, b, c, loud_norm = latest
+                a, b, c, aux_norm = latest
                 target = np.array([a, b, c], dtype=np.float32)
                 smoothed = alpha * target + (1.0 - alpha) * smoothed
 
@@ -407,8 +407,8 @@ def main():
                     neutral_frame=args.seq_neutral_frame,
                     max_frame=args.seq_max_frame,
                 )
-                loud_frame = args.seq_min_frame + loud_norm * (args.seq_max_frame - args.seq_min_frame)
-                frame_f = (1.0 - loud_w) * ml_frame + loud_w * loud_frame
+                aux_frame = args.seq_min_frame + aux_norm * (args.seq_max_frame - args.seq_min_frame)
+                frame_f = (1.0 - aux_w) * ml_frame + aux_w * aux_frame
                 frame_f = float(np.clip(frame_f, args.seq_min_frame, args.seq_max_frame))
 
                 hi = int(np.searchsorted(seq_axis, frame_f, side="left"))
