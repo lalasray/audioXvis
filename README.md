@@ -264,26 +264,6 @@ python -u main/realtime_mesh_driver.py \
   --seq_neutral_deg 60 --seq_neutral_frame 25
 ```
 
-Notes:
-- If Blender is installed as snap and conversion fails due confinement/AppArmor, install a non-snap Blender build and rerun conversion.
-- Without `--mesh`, `realtime_mesh_driver.py` falls back to the deforming color-gradient triangle.
-- For `--mesh_i/--mesh_o` and `--mesh_seq_glob`, all meshes must have identical vertex count/order for interpolation.
-
-### Hybrid Realtime Driver (ML + Audio Level)
-
-Script:
-
-- `main/realtime_mesh_driver_hybrid.py`
-
-This driver mixes:
-
-- `50%` ML prediction signal (angle-based frame mapping)
-- `50%` audio-level signal (low level -> frame 1, high level -> frame 50)
-
-Default hybrid weight:
-
-- `--hybrid_aux_weight 0.5`
-
 Microphone example:
 
 ```bash
