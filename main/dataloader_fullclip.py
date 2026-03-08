@@ -36,6 +36,7 @@ PREDICT_COLUMNS = ("angle_a_deg", "angle_c_deg")
 ALL_ANGLE_COLUMNS = ("angle_a_deg", "angle_b_deg", "angle_c_deg")
 
 COL_INDEX = {"angle_a_deg": 0, "angle_b_deg": 1, "angle_c_deg": 2}
+DATASET_USER_MAP = {"test_dataset": 0, "test_set_2": 1, "test_set_3": 2}
 
 # ── annotation loading ───────────────────────────────────────────────────────
 
@@ -53,6 +54,99 @@ def load_annotation_csv(csv_path: Path) -> Tuple[np.ndarray, np.ndarray]:
     t = np.asarray(frames) / VIDEO_FPS
     angles = np.stack([aa, ab, ac], axis=1).astype(np.float32)
     return t, angles
+
+
+def discover_training_clips(clips_root: Path) -> List[Dict]:
+    """Discover clips from either:
+    1) legacy full_clips root, or
+    2) data root containing test_dataset/full_clips + test_set_2 + test_set_3.
+    """
+    entries: List[Dict] = []
+
+    # Case 1: legacy full_clips-style root
+    legacy_clip_dirs = sorted(
+        d for d in clips_root.iterdir()
+        if d.is_dir() and (d / "video").is_dir() and (d / "annotation").is_dir()
+    ) if clips_root.exists() else []
+    if legacy_clip_dirs:
+        for d in legacy_clip_dirs:
+            videos = sorted((d / "video").glob("*.mp4"))
+            annos = sorted((d / "annotation").glob("*.csv"))
+            if not videos or not annos:
+                continue
+            entries.append(
+                {
+                    "clip_name": d.name,
+                    "video_path": videos[0],
+                    "anno_path": annos[0],
+                    "user_id": 0,
+                    "source": "legacy_full_clips",
+                }
+            )
+        return entries
+
+    # Case 2: project data-root style
+    # test_dataset/full_clips -> user_id 0
+    td_root = clips_root / "test_dataset" / "full_clips"
+    if td_root.is_dir():
+        td_dirs = sorted(
+            d for d in td_root.iterdir()
+            if d.is_dir() and (d / "video").is_dir() and (d / "annotation").is_dir()
+        )
+        for d in td_dirs:
+            videos = sorted((d / "video").glob("*.mp4"))
+            annos = sorted((d / "annotation").glob("*.csv"))
+            if not videos or not annos:
+                continue
+            entries.append(
+                {
+                    "clip_name": f"test_dataset__{d.name}",
+                    "video_path": videos[0],
+                    "anno_path": annos[0],
+                    "user_id": DATASET_USER_MAP["test_dataset"],
+                    "source": "test_dataset",
+                }
+            )
+
+    # test_set_2 songs + gt -> user_id 1
+    ts2_songs = clips_root / "test_set_2" / "songs"
+    ts2_gt = clips_root / "test_set_2" / "gt"
+    if ts2_songs.is_dir() and ts2_gt.is_dir():
+        for video_path in sorted(ts2_songs.glob("*.mp4")):
+            stem = video_path.stem
+            anno_path = ts2_gt / f"gt_{stem}.csv"
+            if not anno_path.exists():
+                continue
+            entries.append(
+                {
+                    "clip_name": f"test_set_2__{stem}",
+                    "video_path": video_path,
+                    "anno_path": anno_path,
+                    "user_id": DATASET_USER_MAP["test_set_2"],
+                    "source": "test_set_2",
+                }
+            )
+
+    # test_set_3 songs + gt -> user_id 2
+    ts3_songs = clips_root / "test_set_3" / "songs"
+    ts3_gt = clips_root / "test_set_3" / "gt"
+    if ts3_songs.is_dir() and ts3_gt.is_dir():
+        for video_path in sorted(ts3_songs.glob("*.mp4")):
+            stem = video_path.stem
+            anno_path = ts3_gt / f"gt_{stem}.csv"
+            if not anno_path.exists():
+                continue
+            entries.append(
+                {
+                    "clip_name": f"test_set_3__{stem}",
+                    "video_path": video_path,
+                    "anno_path": anno_path,
+                    "user_id": DATASET_USER_MAP["test_set_3"],
+                    "source": "test_set_3",
+                }
+            )
+
+    return entries
 
 
 # ── torchaudio transforms (created once, reused) ────────────────────────────
@@ -243,13 +337,15 @@ class FullClipRollingDataset(Dataset):
         target_col_indices = [COL_INDEX[c] for c in self.target_columns]
         self._target_col_indices = target_col_indices
 
-        # Discover clips
-        clip_dirs = sorted(
-            d for d in self.clips_root.iterdir()
-            if d.is_dir() and (d / "video").is_dir() and (d / "annotation").is_dir()
-        )
-        if not clip_dirs:
-            raise ValueError(f"No clip directories found under {self.clips_root}")
+        # Discover clips from supported dataset layouts
+        clip_entries = discover_training_clips(self.clips_root)
+        if not clip_entries:
+            raise ValueError(
+                "No valid clips found. Expected either:\n"
+                "1) legacy full_clips layout under clips_root, or\n"
+                "2) data-root layout with test_dataset/full_clips, test_set_2/songs+gt, test_set_3/songs+gt.\n"
+                f"clips_root={self.clips_root}"
+            )
 
         # Pre-extract features and targets
         self._features: List[Dict[str, np.ndarray]] = []
@@ -260,19 +356,15 @@ class FullClipRollingDataset(Dataset):
 
         hop_samples = int(hop_sec * sr)
 
-        print(f"Pre-extracting features from {len(clip_dirs)} clips (hop={hop_sec}s)...")
-        for ci, clip_dir in enumerate(clip_dirs):
-            clip_name = clip_dir.name
-            videos = sorted((clip_dir / "video").glob("*.mp4"))
-            annos = sorted((clip_dir / "annotation").glob("*.csv"))
-            if not videos or not annos:
-                continue
+        print(f"Pre-extracting features from {len(clip_entries)} clips (hop={hop_sec}s)...")
+        for ci, entry in enumerate(clip_entries):
+            clip_name = entry["clip_name"]
+            video_path = entry["video_path"]
+            anno_path = entry["anno_path"]
+            user_id = int(entry["user_id"])
 
-            # For now, assign user_id=0 for all clips. Future: parse from clip_dir or metadata.
-            user_id = 0
-
-            y_full = load_audio(str(videos[0]), sr=sr)
-            anno_t, angles = load_annotation_csv(annos[0])
+            y_full = load_audio(str(video_path), sr=sr)
+            anno_t, angles = load_annotation_csv(anno_path)
 
             n_windows = max(0, (len(y_full) - self.window_samples) // hop_samples + 1)
             self._clip_names.append(clip_name)
@@ -301,7 +393,10 @@ class FullClipRollingDataset(Dataset):
                 self._meta.append((clip_name, w_idx, start_sec, end_sec, user_id))
                 self._user_ids.append(user_id)
 
-            print(f"  [{ci + 1}/{len(clip_dirs)}] {clip_name}: {n_windows} windows")
+            print(
+                f"  [{ci + 1}/{len(clip_entries)}] {clip_name}: {n_windows} windows "
+                f"(user_id={user_id})"
+            )
 
         if not self._features:
             raise ValueError("No valid windows generated.")
@@ -399,7 +494,7 @@ def rolling_collate(batch: List[Dict]) -> Dict:
 # ── quick test ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    clips_root = Path(__file__).resolve().parent.parent / "data" / "test_dataset" / "full_clips"
+    clips_root = Path(__file__).resolve().parent.parent / "data"
     ds = FullClipRollingDataset(clips_root, window_sec=1.0, hop_sec=0.25)
     print(f"Total windows: {len(ds)}")
     sample = ds[0]
