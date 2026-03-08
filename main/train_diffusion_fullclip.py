@@ -45,8 +45,8 @@ from dataloader_fullclip import (
 @dataclass
 class TrainConfig:
     clips_root: str = "data"
-    batch_size: int = 64
-    epochs: int = 200
+    batch_size: int = 256
+    epochs: int = 500
     lr: float = 3e-4
     weight_decay: float = 1e-4
     num_workers: int = 0
