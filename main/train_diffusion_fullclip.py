@@ -72,6 +72,7 @@ class TrainConfig:
     grad_clip: float = 1.0
     mixup_alpha: float = 0.3
     holdout_clips: str = ""  # comma-separated clip names to exclude from train+val
+    include_test_sets: str = "1,2,3"  # choose among {1,2,3}; e.g. "1" or "1,3"
     # output
     output_dir: str = "main/checkpoints/diffusion_v2"
 
@@ -114,6 +115,18 @@ def move_dict(x_dict: Dict[str, torch.Tensor], device: torch.device):
 
 def derive_angle_b(pred_a: torch.Tensor, pred_c: torch.Tensor) -> torch.Tensor:
     return 180.0 - pred_a - pred_c
+
+
+def clip_belongs_to_selected_sets(clip_name: str, selected_sets: set[int]) -> bool:
+    """Map clip naming convention to dataset set IDs."""
+    if clip_name.startswith("test_dataset__"):
+        return 1 in selected_sets
+    if clip_name.startswith("test_set_2__"):
+        return 2 in selected_sets
+    if clip_name.startswith("test_set_3__"):
+        return 3 in selected_sets
+    # Legacy naming fallback: treat unknown names as set 1.
+    return 1 in selected_sets
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -542,6 +555,26 @@ def train(cfg: TrainConfig) -> None:
     # Clip-based train/val split
     clip_idx = dataset.get_clip_indices()
     clip_names = sorted(clip_idx.keys())
+
+    selected_sets = {
+        int(x.strip())
+        for x in cfg.include_test_sets.split(",")
+        if x.strip()
+    }
+    invalid = sorted(x for x in selected_sets if x not in {1, 2, 3})
+    if not selected_sets or invalid:
+        raise ValueError(
+            "include_test_sets must contain one or more of {1,2,3}, "
+            f"got: '{cfg.include_test_sets}'"
+        )
+    clip_names = [
+        c for c in clip_names if clip_belongs_to_selected_sets(c, selected_sets)
+    ]
+    if not clip_names:
+        raise ValueError(
+            f"No clips left after include_test_sets='{cfg.include_test_sets}'."
+        )
+    print(f"  Included test sets: {sorted(selected_sets)}")
 
     # Remove holdout clips (used for fair held-out evaluation)
     if cfg.holdout_clips:
