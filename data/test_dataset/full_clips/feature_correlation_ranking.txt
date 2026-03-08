@@ -1,0 +1,20 @@
+FEATURE CORRELATION RANKING
+Average |Pearson r| between each audio feature and larynx angles
+Computed across 30 full clips
+======================================================================
+
+Rank  Feature                   Avg |r|    angle_a    angle_b    angle_c   
+----------------------------------------------------------------------
+1     mel_spec_mean             0.4428     0.5046     0.3049     0.5190    
+2     mfcc_0                    0.4428     0.5046     0.3049     0.5190    
+3     rms_energy                0.4229     0.4867     0.2954     0.4866    
+4     zero_crossing_rate        0.4209     0.4884     0.2840     0.4904    
+5     spectral_contrast_mean    0.4070     0.4735     0.2798     0.4679    
+6     spectral_rolloff          0.3626     0.4211     0.2480     0.4187    
+7     mfcc_1                    0.3336     0.3788     0.2308     0.3911    
+8     spectral_centroid         0.2827     0.3327     0.1956     0.3197    
+9     pitch_f0                  0.1580     0.1604     0.1391     0.1745    
+10    onset_strength            0.1459     0.1684     0.0985     0.1709    
+11    harmonic_ratio            0.1377     0.1398     0.1207     0.1527    
+12    chroma_max                0.0000     0.0000     0.0000     0.0000    
+13    tempogram_max             0.0000     0.0000     0.0000     0.0000    

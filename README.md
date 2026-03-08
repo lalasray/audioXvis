@@ -156,6 +156,86 @@ Install example:
 pip install numpy opencv-python
 ```
 
+## Inference Setup (Model + Realtime)
+
+This section covers everything needed to run model inference, including realtime mode from microphone or audio-file streaming.
+
+### Python packages required for inference
+
+- `torch`
+- `torchaudio`
+- `sounddevice` (for mic/audio device input in realtime mode)
+- `numpy`
+- `matplotlib` (used by full-clip inference/plotting)
+
+Install example:
+
+```bash
+pip install torch torchaudio sounddevice numpy matplotlib
+```
+
+### System package needed for `sounddevice` (Linux)
+
+If realtime mic mode fails with PortAudio errors, install:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libportaudio2 portaudio19-dev
+```
+
+### Recommended conda environment (`audio2vis`)
+
+```bash
+conda create -n audio2vis python=3.12 -y
+conda activate audio2vis
+pip install torch torchaudio sounddevice numpy matplotlib opencv-python
+```
+
+### Checkpoint requirements
+
+- Default realtime checkpoint path is:
+  - `main/checkpoints/diffusion_v2/best.pt`
+- The checkpoint must include model config and weights (`ema_state` or `model_state`).
+- If you trained with multiple users/datasets, inference now auto-detects `num_users` from checkpoint weights.
+
+### Realtime inference from microphone
+
+Run from repo root:
+
+```bash
+source /home/lala/miniconda3/etc/profile.d/conda.sh
+conda activate audio2vis
+python -u main/infer_realtime.py
+```
+
+Behavior:
+
+- Uses mic input at 44.1 kHz (`SR_MIC=44100`)
+- Internally resamples to model rate 22.05 kHz
+- Prints predictions continuously:
+  - `Predicted angles: a=..., b=..., c=...`
+- Stop with `Ctrl+C`
+
+### Realtime-style streaming from an audio file
+
+Use `--audio` to simulate realtime inference from a file:
+
+```bash
+source /home/lala/miniconda3/etc/profile.d/conda.sh
+conda activate audio2vis
+python -u main/infer_realtime.py --audio /absolute/path/to/audio.wav
+```
+
+Supported file types depend on your `torchaudio` backend (commonly `.wav`, `.flac`, and many `.mp3/.mp4` cases).
+
+### Full-clip inference (offline, with plots)
+
+Script:
+
+- `main/infer_fullclip.py`
+
+This is for non-realtime full-sequence inference and visualization, while `main/infer_realtime.py` is for live/streaming-style prediction.
+
 ## License
 
 See `LICENSE`.

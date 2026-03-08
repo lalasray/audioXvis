@@ -35,6 +35,13 @@ def load_model(ckpt_path: str, device: torch.device):
     y_dim = ckpt["y_dim"]
     cfg = ckpt["config"]
 
+    state_for_shape = ckpt.get("ema_state", ckpt.get("model_state", {}))
+    user_embed = state_for_shape.get("denoiser.user_embed.weight", None)
+    if user_embed is not None:
+        num_users = int(user_embed.shape[0])
+    else:
+        num_users = int(ckpt.get("num_users", 1))
+
     model = DiffusionRegressor(
         feature_shapes=feature_shapes,
         y_dim=y_dim,
@@ -45,6 +52,7 @@ def load_model(ckpt_path: str, device: torch.device):
         branch_channels=cfg.get("branch_channels", 64),
         n_denoiser_blocks=cfg.get("n_denoiser_blocks", 4),
         dropout=cfg.get("dropout", 0.1),
+        num_users=num_users,
     ).to(device)
 
     # Use EMA weights if available, else model weights

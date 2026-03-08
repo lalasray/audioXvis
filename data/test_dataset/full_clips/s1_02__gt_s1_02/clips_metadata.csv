@@ -1,0 +1,2 @@
+clip_index,clip_name,video_clip_path,annotation_clip_path,start_sec,end_sec,duration_sec,annotation_rows
+0,full_s1_02,../data/test_dataset/full_clips/s1_02__gt_s1_02/video/full_s1_02.mp4,../data/test_dataset/full_clips/s1_02__gt_s1_02/annotation/full_s1_02.csv,0.000,33.500,33.500,2010

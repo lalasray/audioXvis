@@ -8,11 +8,10 @@
 out.csv
 /data/dataset
 /data/model
-/data/test_dataset/audio_features
-gt_s6_05.csv
 /data/test_dataset/sliding_1s_hop_0p1_all
 /main/__pycache__
 *.pt
-/main/checkpoints
-
-/data/test_dataset
+/data/test_dataset/full_clips/angle_plots
+/data/test_dataset/full_clips/angle_vs_feature_plots/s1_01__gt_s1_01
+/data/test_dataset/full_clips/angle_vs_feature_plots
+/data/test_dataset/full_clips/audio_feature_plots
