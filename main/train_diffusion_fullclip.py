@@ -339,6 +339,7 @@ class DiffusionRegressor(nn.Module):
         branch_channels: int = 64,
         n_denoiser_blocks: int = 4,
         dropout: float = 0.1,
+        num_users: int = 1,
     ):
         super().__init__()
         self.steps = steps
@@ -358,7 +359,7 @@ class DiffusionRegressor(nn.Module):
             hidden_dim=hidden_dim,
             n_blocks=n_denoiser_blocks,
             dropout=dropout,
-            num_users=1,           # For now, single user
+            num_users=num_users,
             user_embed_dim=32,     # Can be tuned
         )
 
@@ -597,6 +598,8 @@ def train(cfg: TrainConfig) -> None:
     for k, v in feature_shapes.items():
         print(f"  {k}: {v}")
     print(f"Target dim: {y_dim} ({', '.join(PREDICT_COLUMNS)})")
+    num_users = int(max(dataset._user_ids) + 1) if dataset._user_ids else 1
+    print(f"Detected users: {num_users}")
 
     # ── model ──
     model = DiffusionRegressor(
@@ -609,6 +612,7 @@ def train(cfg: TrainConfig) -> None:
         branch_channels=cfg.branch_channels,
         n_denoiser_blocks=cfg.n_denoiser_blocks,
         dropout=cfg.dropout,
+        num_users=num_users,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -652,10 +656,15 @@ def train(cfg: TrainConfig) -> None:
         for batch in train_loader:
             x = move_dict(batch["x"], device)
             y = batch["y"].to(device)
+            user_id = batch["user_id"].to(device) if "user_id" in batch else None
             y_norm = (y - y_mean) / y_std
 
             # Mixup augmentation (at batch level)
-            if cfg.mixup_alpha > 0 and np.random.random() < 0.5:
+            if (
+                cfg.mixup_alpha > 0
+                and np.random.random() < 0.5
+                and (user_id is None or torch.unique(user_id).numel() == 1)
+            ):
                 x, y_norm = mixup_batch(x, y_norm, alpha=cfg.mixup_alpha)
 
             bs = y_norm.shape[0]
@@ -663,7 +672,7 @@ def train(cfg: TrainConfig) -> None:
             noise = torch.randn_like(y_norm)
             y_noisy = model.q_sample(y_norm, t=t, noise=noise)
 
-            pred_noise = model.predict_noise(x, y_noisy, t)
+            pred_noise = model.predict_noise(x, y_noisy, t, user_id=user_id)
             loss = F.mse_loss(pred_noise, noise)
 
             optimizer.zero_grad(set_to_none=True)
