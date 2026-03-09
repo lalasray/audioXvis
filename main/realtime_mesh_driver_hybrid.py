@@ -86,8 +86,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seq_neutral_deg", type=float, default=60.0, help="Neutral ML angle value")
 
     p.add_argument("--hybrid_aux_weight", type=float, default=0.5, help="Weight of audio-level signal in [0,1], default 0.5")
-    p.add_argument("--aux_floor_db", type=float, default=-55.0, help="Audio level floor in dBFS -> frame min")
-    p.add_argument("--aux_ceil_db", type=float, default=-15.0, help="Audio level ceiling in dBFS -> frame max")
+    p.add_argument("--aux_floor_db", type=float, default=-55.0, help="Audio loudness floor in dBFS -> multiplier 0.0")
+    p.add_argument("--aux_ceil_db", type=float, default=-15.0, help="Audio loudness ceiling in dBFS -> multiplier 1.0")
+    p.add_argument("--aux_pitch_min_hz", type=float, default=80.0, help="Pitch at signed aux +1 (low)")
+    p.add_argument("--aux_pitch_max_hz", type=float, default=350.0, help="Pitch at signed aux -1 (high)")
+    p.add_argument("--aux_silence_db", type=float, default=-55.0, help="At or below this dBFS, signed aux is 0")
     p.add_argument("--frame_transition_sec", type=float, default=0.01, help="Seconds to transition from previous to new predicted frame")
     return p.parse_args()
 
@@ -214,6 +217,26 @@ def aux_level_norm_db(window: np.ndarray, floor_db: float, ceil_db: float) -> tu
     return float(np.clip(v, 0.0, 1.0)), db
 
 
+def estimate_pitch_hz(window: np.ndarray, sr: int) -> float:
+    wav = torch.from_numpy(window).float().unsqueeze(0)
+    try:
+        f0 = torchaudio.functional.detect_pitch_frequency(wav, sample_rate=sr)
+        f0_np = f0.squeeze(0).cpu().numpy().astype(np.float32)
+        valid = f0_np[np.isfinite(f0_np) & (f0_np > 1e-3)]
+        if valid.size == 0:
+            return 0.0
+        return float(np.median(valid))
+    except Exception:
+        return 0.0
+
+
+def map_signed_drive_to_frame(drive: float, min_frame: float, neutral_frame: float, max_frame: float) -> float:
+    d = float(np.clip(drive, -1.0, 1.0))
+    if d >= 0.0:
+        return neutral_frame + d * (max_frame - neutral_frame)
+    return neutral_frame + d * (neutral_frame - min_frame)
+
+
 def make_audio_callback(state: StreamState):
     def audio_callback(indata, frames, _time_info, status):
         if status:
@@ -228,14 +251,23 @@ def make_audio_callback(state: StreamState):
 
 
 def inference_worker(state: StreamState, model, y_mean, y_std, sample_steps: int, feature_stats,
-                     user_id: int, aux_floor_db: float, aux_ceil_db: float):
+                     user_id: int, aux_floor_db: float, aux_ceil_db: float,
+                     aux_pitch_min_hz: float, aux_pitch_max_hz: float, aux_silence_db: float):
     while not state.stop_event.is_set():
         try:
             y_window = state.inf_queue.get(timeout=0.2)
         except queue.Empty:
             continue
         try:
-            aux_norm, aux_db = aux_level_norm_db(y_window, aux_floor_db, aux_ceil_db)
+            loud_norm, aux_db = aux_level_norm_db(y_window, aux_floor_db, aux_ceil_db)
+            pitch_hz = estimate_pitch_hz(y_window, SR_MIC)
+            if aux_db <= aux_silence_db or pitch_hz <= 0.0:
+                pitch_signed = 0.0
+            else:
+                t_pitch = (pitch_hz - aux_pitch_min_hz) / max(aux_pitch_max_hz - aux_pitch_min_hz, 1e-6)
+                t_pitch = float(np.clip(t_pitch, 0.0, 1.0))
+                pitch_signed = 1.0 - 2.0 * t_pitch
+            aux_drive = float(np.clip(pitch_signed * loud_norm, -1.0, 1.0))
             y_window_resampled = torchaudio.functional.resample(torch.from_numpy(y_window), SR_MIC, SR_MODEL).numpy()
             feats = extract_features(y_window_resampled, sr=SR_MODEL)
             if feature_stats is not None:
@@ -249,9 +281,13 @@ def inference_worker(state: StreamState, model, y_mean, y_std, sample_steps: int
             c = float(pred[0, 1].item())
             b = 180.0 - a - c
 
-            print(f"Pred: a={a:.2f}, b={b:.2f}, c={c:.2f} | aux={aux_db:.1f} dB ({aux_norm:.2f})")
+            print(
+                f"Pred: a={a:.2f}, b={b:.2f}, c={c:.2f} | "
+                f"pitch={pitch_hz:.1f}Hz signed={pitch_signed:+.2f} | "
+                f"loud={aux_db:.1f}dB ({loud_norm:.2f}) -> aux={aux_drive:+.2f}"
+            )
             try:
-                state.pose_queue.put((a, b, c, aux_norm), block=False)
+                state.pose_queue.put((a, b, c, aux_drive), block=False)
             except queue.Full:
                 pass
         except Exception as exc:
@@ -474,6 +510,7 @@ def main():
             args=(
                 state, model, y_mean, y_std, sample_steps, feature_stats, args.user_id,
                 args.aux_floor_db, args.aux_ceil_db,
+                args.aux_pitch_min_hz, args.aux_pitch_max_hz, args.aux_silence_db,
             ),
         daemon=True,
     ).start()
@@ -528,7 +565,7 @@ def main():
                 except queue.Empty:
                     break
             if latest is not None:
-                a, b, c, aux_norm = latest
+                a, b, c, aux_drive = latest
                 target = np.array([a, b, c], dtype=np.float32)
                 smoothed = alpha * target + (1.0 - alpha) * smoothed
 
@@ -542,7 +579,12 @@ def main():
                     neutral_frame=args.seq_neutral_frame,
                     max_frame=args.seq_max_frame,
                 )
-                aux_frame = args.seq_min_frame + aux_norm * (args.seq_max_frame - args.seq_min_frame)
+                aux_frame = map_signed_drive_to_frame(
+                    drive=aux_drive,
+                    min_frame=args.seq_min_frame,
+                    neutral_frame=args.seq_neutral_frame,
+                    max_frame=args.seq_max_frame,
+                )
                 frame_f = (1.0 - aux_w) * ml_frame + aux_w * aux_frame
                 frame_f = float(np.clip(frame_f, args.seq_min_frame, args.seq_max_frame))
                 transition_from_f = current_frame_f
