@@ -1,9 +1,5 @@
 """
-Realtime sequence-mesh driver with hybrid control:
-  - 50% ML predicted angle signal
-  - 50% audio level signal
-
-Low level maps to frame 1, high level pushes toward frame 50.
+Realtime sequence-mesh driver with hybrid control
 """
 
 from __future__ import annotations
@@ -91,7 +87,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--aux_pitch_min_hz", type=float, default=80.0, help="Pitch at signed aux +1 (low)")
     p.add_argument("--aux_pitch_max_hz", type=float, default=350.0, help="Pitch at signed aux -1 (high)")
     p.add_argument("--aux_silence_db", type=float, default=-55.0, help="At or below this dBFS, signed aux is 0")
-    p.add_argument("--frame_transition_sec", type=float, default=0.01, help="Seconds to transition from previous to new predicted frame")
+    p.add_argument("--frame_transition_sec", type=float, default=0.5, help="Seconds to transition from previous to new predicted frame")
+    p.add_argument("--adaptive_transition", action=argparse.BooleanOptionalAction, default=True, help="Adapt transition duration to observed prediction interval")
+    p.add_argument("--adaptive_transition_alpha", type=float, default=0.3, help="EMA alpha for adaptive transition duration")
     return p.parse_args()
 
 
@@ -287,7 +285,7 @@ def inference_worker(state: StreamState, model, y_mean, y_std, sample_steps: int
                 f"loud={aux_db:.1f}dB ({loud_norm:.2f}) -> aux={aux_drive:+.2f}"
             )
             try:
-                state.pose_queue.put((a, b, c, aux_drive), block=False)
+                state.pose_queue.put((a, b, c, aux_drive, time.monotonic()), block=False)
             except queue.Full:
                 pass
         except Exception as exc:
@@ -528,28 +526,45 @@ def main():
         stream = sd.InputStream(channels=1, samplerate=SR_MIC, callback=make_audio_callback(state), blocksize=hop_samples)
         stream.start()
 
-    plotter = pv.Plotter(window_size=(1200, 900))
+    plotter = pv.Plotter(shape=(1, 2), window_size=(1800, 900))
 
-    def add_mesh_for_frame(frame_idx: int):
+    def add_mesh_for_frame(frame_idx: int, view_col: int):
+        plotter.subplot(0, view_col)
         mesh = seq_meshes[frame_idx]
         return plotter.add_mesh(mesh, scalars="mtl_rgb", rgb=True, smooth_shading=True, name="seq_mesh", reset_camera=False)
 
-    mesh_actor = add_mesh_for_frame(0)
+    mesh_actor_main = add_mesh_for_frame(0, 0)
+    mesh_actor_rot = add_mesh_for_frame(0, 1)
     current_frame_idx = 0
+
+    plotter.subplot(0, 0)
     plotter.add_axes()
     plotter.set_background("black")
     plotter.camera_position = "xy"
     plotter.camera.zoom(1.2)
+
+    plotter.subplot(0, 1)
+    plotter.add_axes()
+    plotter.set_background("black")
+    plotter.camera_position = "xy"
+    plotter.camera.Elevation(90.0)
+    plotter.camera.Azimuth(180.0)
+    plotter.camera.Roll(0.0)
+    plotter.camera.zoom(0.6)
+
     plotter.show(auto_close=False, interactive_update=True)
 
     alpha = float(np.clip(args.smooth_alpha, 0.0, 1.0))
     aux_w = float(np.clip(args.hybrid_aux_weight, 0.0, 1.0))
     transition_sec = float(max(args.frame_transition_sec, 1e-3))
+    adaptive_alpha = float(np.clip(args.adaptive_transition_alpha, 0.0, 1.0))
     smoothed = np.array([args.seq_neutral_deg, args.seq_neutral_deg, args.seq_neutral_deg], dtype=np.float32)
     current_frame_f = float(np.clip(args.seq_neutral_frame, args.seq_min_frame, args.seq_max_frame))
     transition_from_f = current_frame_f
     transition_to_f = current_frame_f
+    transition_duration_sec = transition_sec
     transition_start_t = time.monotonic()
+    last_pred_t = None
 
     try:
         while not state.stop_event.is_set():
@@ -565,7 +580,7 @@ def main():
                 except queue.Empty:
                     break
             if latest is not None:
-                a, b, c, aux_drive = latest
+                a, b, c, aux_drive, pred_t = latest
                 target = np.array([a, b, c], dtype=np.float32)
                 smoothed = alpha * target + (1.0 - alpha) * smoothed
 
@@ -590,9 +605,19 @@ def main():
                 transition_from_f = current_frame_f
                 transition_to_f = frame_f
                 transition_start_t = time.monotonic()
+                if args.adaptive_transition:
+                    if last_pred_t is None:
+                        transition_duration_sec = transition_sec
+                    else:
+                        observed = float(max(pred_t - last_pred_t, 1e-3))
+                        observed = float(np.clip(observed, 0.01, 2.0))
+                        transition_duration_sec = (1.0 - adaptive_alpha) * transition_duration_sec + adaptive_alpha * observed
+                    last_pred_t = pred_t
+                else:
+                    transition_duration_sec = transition_sec
 
             elapsed = time.monotonic() - transition_start_t
-            t = float(np.clip(elapsed / transition_sec, 0.0, 1.0))
+            t = float(np.clip(elapsed / max(transition_duration_sec, 1e-3), 0.0, 1.0))
             current_frame_f = (1.0 - t) * transition_from_f + t * transition_to_f
             frame_f = current_frame_f
 
@@ -622,9 +647,11 @@ def main():
                         target_frame_idx = hi
                 if target_frame_idx != current_frame_idx:
                     try:
-                        mesh_actor.mapper.SetInputDataObject(seq_meshes[target_frame_idx])
+                        mesh_actor_main.mapper.SetInputDataObject(seq_meshes[target_frame_idx])
+                        mesh_actor_rot.mapper.SetInputDataObject(seq_meshes[target_frame_idx])
                     except Exception:
-                        mesh_actor = add_mesh_for_frame(target_frame_idx)
+                        mesh_actor_main = add_mesh_for_frame(target_frame_idx, 0)
+                        mesh_actor_rot = add_mesh_for_frame(target_frame_idx, 1)
                     current_frame_idx = target_frame_idx
                     plotter.render()
             time.sleep(0.01)
