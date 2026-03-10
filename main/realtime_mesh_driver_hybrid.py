@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import glob
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import queue
 import re
 import shutil
