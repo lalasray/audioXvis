@@ -9,6 +9,8 @@ out.csv
 /data/dataset
 /data/test_dataset/sliding_1s_hop_0p1_all
 /main/__pycache__
+/webapp/__pycache__
+/webapp/generated
 /data/test_dataset/full_clips/angle_plots
 /data/test_dataset/full_clips/angle_vs_feature_plots/s1_01__gt_s1_01
 /data/test_dataset/full_clips/angle_vs_feature_plots
@@ -16,3 +18,4 @@ out.csv
 /data/model
 /main/checkpoints
 *.zip
+/data

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Seeing Vocals</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Audio2Vis Realtime Viewer</p>
+          <h1>Seeing Vocals</h1>
+        </div>
+        <div class="top-icons">
+          <button class="icon-btn" id="refreshBtn" title="Reload mesh">↻</button>
+          <button class="icon-btn" id="resetViewBtn" title="Reset camera">◎</button>
+          <button class="icon-btn" id="stopBtnTop" title="Stop all">⏻</button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="control-panel panel">
+          <div class="track-stack">
+            <div class="track-card primary">
+              <div class="track-head">
+                <p>Main Voice</p>
+                <span id="primarySourceLabel">Primary source</span>
+              </div>
+
+              <div class="device-card">
+                <label for="micSelect">Microphone Input</label>
+                <select id="micSelect"></select>
+              </div>
+
+              <div class="action-row">
+                <button class="record-btn" id="startMicBtn">Rec</button>
+                <button class="ghost-btn" id="stopBtn">Stop</button>
+              </div>
+
+              <div class="upload-card">
+                <div class="field">
+                  <label for="sampleSelect">Sample Audio</label>
+                  <select id="sampleSelect"></select>
+                </div>
+                <div class="action-row compact">
+                  <button class="play-btn" id="playSampleBtn">Play Sample</button>
+                  <label class="upload-btn">
+                    Upload
+                    <input type="file" id="fileInput" accept="audio/*" hidden />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="track-card compare">
+              <div class="track-head">
+                <p>Comparison Voice</p>
+                <span id="compareSourceLabel">Comparison source</span>
+              </div>
+
+              <div class="upload-card">
+                <div class="field">
+                  <label for="compareSampleSelect">Comparison Sample</label>
+                  <select id="compareSampleSelect"></select>
+                </div>
+                <div class="field">
+                  <label for="compareUrlInput">Online Audio Link</label>
+                  <input id="compareUrlInput" type="url" placeholder="https://example.com/voice.mp3" />
+                </div>
+                <div class="action-row compact">
+                  <button class="play-btn" id="playCompareSampleBtn">Play Compare</button>
+                  <button class="ghost-btn compare-btn" id="playCompareUrlBtn">Load URL</button>
+                </div>
+                <div class="action-row compact">
+                  <label class="upload-btn compare-upload">
+                    Upload Compare
+                    <input type="file" id="compareFileInput" accept="audio/*" hidden />
+                  </label>
+                  <button class="ghost-btn compare-btn" id="stopCompareBtn">Clear Compare</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="wave-card">
+            <canvas id="waveCanvas" width="640" height="240"></canvas>
+            <div class="wave-meta">
+              <span id="timeLabel">0:00 / 0:00</span>
+              <span id="statusLabel">Idle</span>
+            </div>
+          </div>
+
+          <div class="metrics">
+            <div class="metric">
+              <span>A</span>
+              <strong id="angleA">60.0°</strong>
+            </div>
+            <div class="metric">
+              <span>B</span>
+              <strong id="angleB">60.0°</strong>
+            </div>
+            <div class="metric">
+              <span>C</span>
+              <strong id="angleC">60.0°</strong>
+            </div>
+          </div>
+
+          <div class="compare-metrics">
+            <div class="metric compare-metric">
+              <span>Delta A</span>
+              <strong id="deltaA">0.0°</strong>
+            </div>
+            <div class="metric compare-metric">
+              <span>Delta B</span>
+              <strong id="deltaB">0.0°</strong>
+            </div>
+            <div class="metric compare-metric">
+              <span>Delta C</span>
+              <strong id="deltaC">0.0°</strong>
+            </div>
+            <div class="metric compare-metric">
+              <span>Mean Gap</span>
+              <strong id="deltaMean">0.0°</strong>
+            </div>
+          </div>
+
+          <div class="comparison-summary" id="comparisonSummary">
+            Load a second voice to compare motion and angle deltas.
+          </div>
+        </section>
+
+        <section class="viewer-panel panel">
+          <div class="viewer-toolbar top">
+            <button class="tool-btn" id="frontViewBtn">Front</button>
+            <button class="tool-btn" id="sideViewBtn">Side</button>
+            <button class="tool-btn" id="tiltViewBtn">Tilt</button>
+          </div>
+          <div class="viewer-toolbar view-switcher">
+            <button class="tool-btn mode-btn active" data-view-mode="single">Solo</button>
+            <button class="tool-btn mode-btn" data-view-mode="split">Side by Side</button>
+            <button class="tool-btn mode-btn" data-view-mode="overlay">Overlay</button>
+          </div>
+
+          <div class="viewer-stage active" id="singleStage">
+            <canvas id="glCanvas"></canvas>
+          </div>
+
+          <div class="viewer-stage split-stage" id="splitStage">
+            <div class="viewer-split-pane">
+              <span class="viewer-tag">Main</span>
+              <canvas id="glPrimaryCanvas"></canvas>
+            </div>
+            <div class="viewer-split-pane compare-pane">
+              <span class="viewer-tag">Compare</span>
+              <canvas id="glCompareCanvas"></canvas>
+            </div>
+          </div>
+
+          <div class="viewer-stage" id="overlayStage">
+            <div class="overlay-legend">
+              <span class="legend-chip primary-chip">Main Voice</span>
+              <span class="legend-chip compare-chip">Compare Voice</span>
+            </div>
+            <canvas id="glOverlayCanvas"></canvas>
+          </div>
+
+          <div class="viewer-corner">
+            <button class="tool-btn small" id="zoomInBtn">+</button>
+            <button class="tool-btn small" id="zoomOutBtn">-</button>
+          </div>
+        </section>
+      </main>
+
+      <footer class="transport panel">
+        <div class="transport-row">
+          <button class="play-btn square" id="transportPlayBtn">▶</button>
+          <button class="ghost-btn square" id="transportStopBtn">■</button>
+          <div class="progress-wrap">
+            <div class="progress-track">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+          </div>
+          <div class="status-chip" id="sourceLabel">No input</div>
+        </div>
+      </footer>
+    </div>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

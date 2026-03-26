@@ -292,6 +292,31 @@ Decoder note:
 
 - If `torchaudio` cannot decode `.aac`, the hybrid script automatically falls back to `ffmpeg` decoding.
 
+## Web App
+
+A local browser UI is available in `webapp/`. It wraps the existing audio-to-angle inference path and drives the baked OBJ larynx sequence in a dark control-panel layout.
+
+Launch from repo root:
+
+```bash
+source /home/lala/miniconda3/etc/profile.d/conda.sh
+conda activate audio2vis
+python webapp/server.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+Notes:
+
+- The app uses the baked mesh sequence in `main/_fbx_baked/`.
+- On first run it generates cached binary mesh assets in `webapp/generated/` for faster browser playback.
+- You can drive the mesh from either a live microphone device or an uploaded/sample audio file.
+- If your environment blocks binding a local port, run the same command outside the sandboxed session.
+
 ## License
 
 See `LICENSE`.
