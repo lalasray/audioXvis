@@ -10,7 +10,19 @@ The project combines ultrasound-derived supervision, audio-driven inference, and
 - `webapp/`: local web UI for live microphone or uploaded audio
 - `Utils/`: data preparation, annotation, extraction, plotting, and conversion scripts
 - `tracked/`: tracking artifacts and example outputs
-- `data/`: local datasets, meshes, and checkpoints when present in your copy
+- `data/`: local datasets, meshes, and checkpoints when present in your local setup
+
+## Data
+
+The repository does not include the project datasets in Git.
+
+Expected local assets may include:
+
+- model checkpoints such as `main/checkpoints/diffusion_v2/best.pt`
+- local media, annotations, and derived geometry under `data/`
+- optional sample audio used by the web app
+
+If you clone the repository on a new machine, you will need to place the required local data and checkpoints yourself.
 
 ## Setup
 
@@ -63,6 +75,7 @@ What the web app expects:
 - a trained checkpoint at `main/checkpoints/diffusion_v2/best.pt`, or a custom one passed with `--ckpt`
 - baked OBJ mesh frames in `main/_fbx_baked/`
 - dependencies from `environment.yml`
+- any optional local sample audio under `data/` if you want the sample picker populated
 
 What happens on first launch:
 
@@ -91,7 +104,7 @@ Offline full-clip inference:
 ```bash
 python -u main/infer_fullclip.py \
   --ckpt main/checkpoints/diffusion_v2/best.pt \
-  --clips_root data/test_dataset/full_clips \
+  --clips_root /path/to/full_clips \
   --output_dir main/checkpoints/diffusion_v2/inference_plots
 ```
 
@@ -101,8 +114,8 @@ Extract triangle geometry from a 5-point annotation CSV:
 
 ```bash
 python Utils/extract_us_geometry.py \
-  -a data/test_dataset/annotation/us_example.csv \
-  -i data/test_dataset/videos/example.mp4 \
+  -a /path/to/annotation/us_example.csv \
+  -i /path/to/video/example.mp4 \
   -o gt_example.csv
 ```
 
@@ -110,7 +123,7 @@ Visualize extracted geometry next to the source video:
 
 ```bash
 python Utils/visualize_us_geometry.py \
-  -i data/test_dataset/videos/example.mp4 \
+  -i /path/to/video/example.mp4 \
   -g gt_example.csv \
   -o example_geometry_side_by_side.mp4
 ```
