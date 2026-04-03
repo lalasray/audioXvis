@@ -19,3 +19,4 @@ out.csv
 /main/checkpoints
 *.zip
 /data
+.codex

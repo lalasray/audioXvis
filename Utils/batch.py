@@ -7,25 +7,27 @@ from audio_extract import batch_extract_audio
 
 
 def resolve_default_input_dir() -> str:
-	candidates = [
-		Path("data/test_dataset/videos"),
-		Path("data/test_dataset/one_experienced_singer_dataset_songs"),
-	]
-	for candidate in candidates:
-		if candidate.exists():
-			return str(candidate)
-	return str(candidates[0])
+	root = Path("data/test_dataset")
+	preferred = root / "videos"
+	if preferred.exists():
+		return str(preferred)
+	if root.exists():
+		for candidate in sorted(root.iterdir()):
+			if candidate.is_dir() and "song" in candidate.name.lower():
+				return str(candidate)
+	return str(preferred)
 
 
 def resolve_default_output_dir() -> str:
-	candidates = [
-		Path("data/test_dataset/audio"),
-		Path("data/test_dataset/one_experienced_singer_dataset_audio"),
-	]
-	for candidate in candidates:
-		if candidate.exists():
-			return str(candidate)
-	return str(candidates[0])
+	root = Path("data/test_dataset")
+	preferred = root / "audio"
+	if preferred.exists():
+		return str(preferred)
+	if root.exists():
+		for candidate in sorted(root.iterdir()):
+			if candidate.is_dir() and "audio" in candidate.name.lower():
+				return str(candidate)
+	return str(preferred)
 
 
 def main() -> None:

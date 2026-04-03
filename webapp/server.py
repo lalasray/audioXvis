@@ -280,13 +280,15 @@ class Audio2VisService:
 
     def _discover_samples(self) -> list[dict[str, str]]:
         samples: list[dict[str, str]] = []
-        candidate_patterns = [
-            "data/test.*",
-            "data/test_dataset/audio/*",
-            "data/test_dataset/one_experienced_singer_dataset_audio/*",
-            "data/test_set_2/audio/*",
-            "data/test_set_3/audio/*",
-        ]
+        candidate_patterns = ["data/test.*"]
+        data_root = REPO_ROOT / "data"
+        if data_root.exists():
+            for dataset_dir in sorted(data_root.iterdir()):
+                if not dataset_dir.is_dir():
+                    continue
+                for subdir in sorted(dataset_dir.iterdir()):
+                    if subdir.is_dir() and "audio" in subdir.name.lower():
+                        candidate_patterns.append(str(subdir.relative_to(REPO_ROOT) / "*"))
         seen: set[Path] = set()
         for pattern in candidate_patterns:
             for path in sorted(REPO_ROOT.glob(pattern))[:4]:

@@ -266,6 +266,14 @@ def prepare_one_set(set_root: Path, songs_src_name: str, anno_src_name: str, for
     songs_src = set_root / songs_src_name
     anno_src = set_root / anno_src_name
     if not songs_src.is_dir():
+        candidates = [d for d in sorted(set_root.iterdir()) if d.is_dir() and "song" in d.name.lower()]
+        if candidates:
+            songs_src = candidates[0]
+    if not anno_src.is_dir():
+        candidates = [d for d in sorted(set_root.iterdir()) if d.is_dir() and "anno" in d.name.lower()]
+        if candidates:
+            anno_src = candidates[0]
+    if not songs_src.is_dir():
         raise FileNotFoundError(f"Songs source folder not found: {songs_src}")
     if not anno_src.is_dir():
         raise FileNotFoundError(f"Annotation source folder not found: {anno_src}")
@@ -308,8 +316,8 @@ def main() -> None:
     args = parser.parse_args()
 
     data_root = Path(args.data_root)
-    prepare_one_set(data_root / "test_set_2", "task1_songs", "task1_anno", force=args.force)
-    prepare_one_set(data_root / "test_set_3", "task2_songs", "task2_anno", force=args.force)
+    prepare_one_set(data_root / "test_set_2", "__auto_songs__", "__auto_anno__", force=args.force)
+    prepare_one_set(data_root / "test_set_3", "__auto_songs__", "__auto_anno__", force=args.force)
 
 
 if __name__ == "__main__":

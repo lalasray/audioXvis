@@ -14,12 +14,18 @@ The project combines ultrasound-derived supervision, audio-driven inference, and
 
 ## Setup
 
-Create a virtual environment and install dependencies:
+Create the conda environment from `environment.yml`:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+/home/lala/miniconda3/bin/conda env create -f environment.yml
+/home/lala/miniconda3/bin/conda activate audio2vis
+```
+
+If `conda` is already initialized in your shell, the shorter form also works:
+
+```bash
+conda env create -f environment.yml
+conda activate audio2vis
 ```
 
 For microphone input on Linux, you may also need:
@@ -56,7 +62,7 @@ What the web app expects:
 
 - a trained checkpoint at `main/checkpoints/diffusion_v2/best.pt`, or a custom one passed with `--ckpt`
 - baked OBJ mesh frames in `main/_fbx_baked/`
-- dependencies from `requirements.txt`
+- dependencies from `environment.yml`
 
 What happens on first launch:
 

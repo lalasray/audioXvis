@@ -67,11 +67,16 @@ def canonicalize_point(
 
 def discover_annotation_files(data_root: Path, user_id: int) -> List[Path]:
     if user_id == 0:
-        candidates = [
-            data_root / "test_dataset" / "annotation",
-            data_root / "test_dataset" / "one_experienced_singer_anno",
-        ]
+        test_dataset_root = data_root / "test_dataset"
+        preferred = test_dataset_root / "annotation"
+        candidates = [preferred]
+        if test_dataset_root.exists():
+            for candidate in sorted(test_dataset_root.iterdir()):
+                if candidate.is_dir() and "anno" in candidate.name.lower():
+                    candidates.append(candidate)
         for candidate in candidates:
+            if not candidate.is_dir():
+                continue
             files = sorted(candidate.glob("us_*.csv"))
             if files:
                 return files

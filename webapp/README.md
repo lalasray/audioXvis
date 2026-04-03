@@ -2,6 +2,22 @@
 
 This app serves the local Audio2Vis demo UI. It runs inference on live microphone input or uploaded audio, then drives the baked larynx mesh sequence in the browser.
 
+## Setup
+
+Create and activate the conda environment from the repository root:
+
+```bash
+/home/lala/miniconda3/bin/conda env create -f environment.yml
+/home/lala/miniconda3/bin/conda activate audio2vis
+```
+
+If `conda` is already initialized in your shell, the shorter form also works:
+
+```bash
+conda env create -f environment.yml
+conda activate audio2vis
+```
+
 ## Run
 
 From the repository root:
@@ -20,7 +36,7 @@ python webapp/server.py --host 127.0.0.1 --port 8765 --ckpt main/checkpoints/dif
 
 ## Requirements
 
-- Python dependencies from `requirements.txt`
+- Python dependencies from `environment.yml`
 - A model checkpoint at `main/checkpoints/diffusion_v2/best.pt` or a custom path passed with `--ckpt`
 - `ffmpeg` in `PATH` if you want broader audio format fallback support
 
