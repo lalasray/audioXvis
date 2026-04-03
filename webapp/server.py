@@ -16,11 +16,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-
-import numpy as np
-import sounddevice as sd
-import torch
-import torchaudio
+import argparse
+import importlib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAIN_DIR = REPO_ROOT / "main"
@@ -39,7 +36,26 @@ WINDOW_SEC = 0.5
 HOP_SEC = 0.25
 
 sys.path.append(str(MAIN_DIR))
-from infer_fullclip import extract_features, load_model, normalize_features  # noqa: E402
+
+DEPS_IMPORT_ERROR: Exception | None = None
+try:
+    np = importlib.import_module("numpy")
+    sd = importlib.import_module("sounddevice")
+    torch = importlib.import_module("torch")
+    torchaudio = importlib.import_module("torchaudio")
+    infer_fullclip = importlib.import_module("infer_fullclip")
+    extract_features = infer_fullclip.extract_features
+    load_model = infer_fullclip.load_model
+    normalize_features = infer_fullclip.normalize_features
+except Exception as exc:  # pragma: no cover - import-time environment guard
+    DEPS_IMPORT_ERROR = exc
+    np = None
+    sd = None
+    torch = None
+    torchaudio = None
+    extract_features = None
+    load_model = None
+    normalize_features = None
 
 
 def natural_sort_key(path_str: str) -> list[Any]:
@@ -227,8 +243,9 @@ class TrackSession:
 
 
 class Audio2VisService:
-    def __init__(self, mesh_cache: MeshSequenceCache):
+    def __init__(self, mesh_cache: MeshSequenceCache, ckpt_path: str):
         self.mesh_cache = mesh_cache
+        self.ckpt_path = ckpt_path
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.window_samples = int(WINDOW_SEC * SR_MIC)
         self.hop_samples = int(HOP_SEC * SR_MIC)
@@ -263,11 +280,25 @@ class Audio2VisService:
 
     def _discover_samples(self) -> list[dict[str, str]]:
         samples: list[dict[str, str]] = []
-        candidates = [REPO_ROOT / "data" / "test.aac"]
-        candidates.extend(sorted((REPO_ROOT / "data" / "test_set_2" / "audio").glob("*.mp3"))[:4])
-        for path in candidates:
-            if path.exists():
-                samples.append({"label": path.name, "path": str(path.resolve())})
+        candidate_patterns = [
+            "data/test.*",
+            "data/test_dataset/audio/*",
+            "data/test_dataset/one_experienced_singer_dataset_audio/*",
+            "data/test_set_2/audio/*",
+            "data/test_set_3/audio/*",
+        ]
+        seen: set[Path] = set()
+        for pattern in candidate_patterns:
+            for path in sorted(REPO_ROOT.glob(pattern))[:4]:
+                if not path.is_file():
+                    continue
+                if path.suffix.lower() not in {".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"}:
+                    continue
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                samples.append({"label": path.name, "path": str(resolved)})
         return samples
 
     def _ensure_model(self) -> None:
@@ -276,7 +307,7 @@ class Audio2VisService:
         with self.model_lock:
             if self.model is not None:
                 return
-            self.model, self.y_mean, self.y_std, self.sample_steps, _, self.feature_stats = load_model(DEFAULT_CKPT, self.device)
+            self.model, self.y_mean, self.y_std, self.sample_steps, _, self.feature_stats = load_model(self.ckpt_path, self.device)
 
     def _get_track(self, track_key: str) -> TrackSession:
         if track_key not in self.tracks:
@@ -708,12 +739,24 @@ class AppHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Serve the Audio2Vis local web app.")
+    parser.add_argument("--host", default=HOST, help="Host interface to bind.")
+    parser.add_argument("--port", type=int, default=PORT, help="Port to bind.")
+    parser.add_argument("--ckpt", default=DEFAULT_CKPT, help="Path to model checkpoint.")
+    args = parser.parse_args()
+
+    if DEPS_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "Missing runtime dependencies for the web app. "
+            "Install requirements.txt before launching the server."
+        ) from DEPS_IMPORT_ERROR
+
     print("Preparing mesh cache for the web viewer...")
     mesh_cache = MeshSequenceCache(mesh_glob=MESH_GLOB, mtl_source_obj=DEFAULT_MTL_OBJ)
-    service = Audio2VisService(mesh_cache)
-    httpd = ThreadingHTTPServer((HOST, PORT), AppHandler)
+    service = Audio2VisService(mesh_cache, ckpt_path=args.ckpt)
+    httpd = ThreadingHTTPServer((args.host, args.port), AppHandler)
     httpd.service = service  # type: ignore[attr-defined]
-    print(f"Audio2Vis web app running at http://{HOST}:{PORT}")
+    print(f"Audio2Vis web app running at http://{args.host}:{args.port}")
     httpd.serve_forever()
 
 

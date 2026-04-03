@@ -17,7 +17,7 @@ python generate_rolling_clips.py --audio-dir /path/to/audio/ --output-dir ./clip
 #+ python generate_rolling_clips.py --audio-dir /path/to/audio/ --windows 1,2,5 --dry-run
 
 # split videos with audio:
-#+ python generate_rolling_clips.py --audio-dir /home/lala/Documents/GitHub/audioXvis/data/test_dataset --media-type video --windows 1,2,5
+#+ python generate_rolling_clips.py --audio-dir ./data/test_dataset --media-type video --windows 1,2,5
 
 """
 import argparse

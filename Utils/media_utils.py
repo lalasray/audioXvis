@@ -16,14 +16,15 @@ def resolve_ffmpeg_path(ffmpeg_path: str | None = None) -> str | None:
     if ffmpeg_path:
         return ffmpeg_path
 
+    path_env = os.environ.get("PATH", "")
     possible_paths = [
         "ffmpeg",
         "/usr/bin/ffmpeg",
         "/usr/local/bin/ffmpeg",
-        os.path.expanduser("~/miniconda3/bin/ffmpeg"),
-        os.path.expanduser("~/miniconda3/envs/audio2vis/bin/ffmpeg"),
-        "/home/lala/miniconda3/envs/audio2vis/bin/ffmpeg",
     ]
+    for path_entry in path_env.split(os.pathsep):
+        if path_entry:
+            possible_paths.append(str(Path(path_entry) / "ffmpeg"))
 
     for path in possible_paths:
         if path == "ffmpeg" and shutil.which("ffmpeg"):

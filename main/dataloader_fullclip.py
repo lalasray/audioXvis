@@ -36,7 +36,29 @@ PREDICT_COLUMNS = ("angle_a_deg", "angle_c_deg")
 ALL_ANGLE_COLUMNS = ("angle_a_deg", "angle_b_deg", "angle_c_deg")
 
 COL_INDEX = {"angle_a_deg": 0, "angle_b_deg": 1, "angle_c_deg": 2}
-DATASET_USER_MAP = {"test_dataset": 0, "test_set_2": 1, "test_set_3": 2}
+DATASET_SOURCES = (
+    {
+        "label": "dataset_a",
+        "user_id": 0,
+        "clip_roots": ("test_dataset/full_clips",),
+        "song_roots": (),
+        "gt_roots": (),
+    },
+    {
+        "label": "dataset_b",
+        "user_id": 1,
+        "clip_roots": (),
+        "song_roots": ("test_set_2/songs",),
+        "gt_roots": ("test_set_2/gt",),
+    },
+    {
+        "label": "dataset_c",
+        "user_id": 2,
+        "clip_roots": (),
+        "song_roots": ("test_set_3/songs",),
+        "gt_roots": ("test_set_3/gt",),
+    },
+)
 
 # ── annotation loading ───────────────────────────────────────────────────────
 
@@ -59,7 +81,7 @@ def load_annotation_csv(csv_path: Path) -> Tuple[np.ndarray, np.ndarray]:
 def discover_training_clips(clips_root: Path) -> List[Dict]:
     """Discover clips from either:
     1) legacy full_clips root, or
-    2) data root containing test_dataset/full_clips + test_set_2 + test_set_3.
+    2) project data root containing the bundled dataset folders.
     """
     entries: List[Dict] = []
 
@@ -86,65 +108,49 @@ def discover_training_clips(clips_root: Path) -> List[Dict]:
         return entries
 
     # Case 2: project data-root style
-    # test_dataset/full_clips -> user_id 0
-    td_root = clips_root / "test_dataset" / "full_clips"
-    if td_root.is_dir():
-        td_dirs = sorted(
-            d for d in td_root.iterdir()
-            if d.is_dir() and (d / "video").is_dir() and (d / "annotation").is_dir()
-        )
-        for d in td_dirs:
-            videos = sorted((d / "video").glob("*.mp4"))
-            annos = sorted((d / "annotation").glob("*.csv"))
-            if not videos or not annos:
+    for source in DATASET_SOURCES:
+        for clip_root_rel in source["clip_roots"]:
+            clip_root = clips_root / clip_root_rel
+            if not clip_root.is_dir():
                 continue
-            entries.append(
-                {
-                    "clip_name": f"test_dataset__{d.name}",
-                    "video_path": videos[0],
-                    "anno_path": annos[0],
-                    "user_id": DATASET_USER_MAP["test_dataset"],
-                    "source": "test_dataset",
-                }
+            clip_dirs = sorted(
+                d for d in clip_root.iterdir()
+                if d.is_dir() and (d / "video").is_dir() and (d / "annotation").is_dir()
             )
+            for d in clip_dirs:
+                videos = sorted((d / "video").glob("*.mp4"))
+                annos = sorted((d / "annotation").glob("*.csv"))
+                if not videos or not annos:
+                    continue
+                entries.append(
+                    {
+                        "clip_name": f"{source['label']}__{d.name}",
+                        "video_path": videos[0],
+                        "anno_path": annos[0],
+                        "user_id": source["user_id"],
+                        "source": source["label"],
+                    }
+                )
 
-    # test_set_2 songs + gt -> user_id 1
-    ts2_songs = clips_root / "test_set_2" / "songs"
-    ts2_gt = clips_root / "test_set_2" / "gt"
-    if ts2_songs.is_dir() and ts2_gt.is_dir():
-        for video_path in sorted(ts2_songs.glob("*.mp4")):
-            stem = video_path.stem
-            anno_path = ts2_gt / f"gt_{stem}.csv"
-            if not anno_path.exists():
+        for song_root_rel, gt_root_rel in zip(source["song_roots"], source["gt_roots"]):
+            song_root = clips_root / song_root_rel
+            gt_root = clips_root / gt_root_rel
+            if not song_root.is_dir() or not gt_root.is_dir():
                 continue
-            entries.append(
-                {
-                    "clip_name": f"test_set_2__{stem}",
-                    "video_path": video_path,
-                    "anno_path": anno_path,
-                    "user_id": DATASET_USER_MAP["test_set_2"],
-                    "source": "test_set_2",
-                }
-            )
-
-    # test_set_3 songs + gt -> user_id 2
-    ts3_songs = clips_root / "test_set_3" / "songs"
-    ts3_gt = clips_root / "test_set_3" / "gt"
-    if ts3_songs.is_dir() and ts3_gt.is_dir():
-        for video_path in sorted(ts3_songs.glob("*.mp4")):
-            stem = video_path.stem
-            anno_path = ts3_gt / f"gt_{stem}.csv"
-            if not anno_path.exists():
-                continue
-            entries.append(
-                {
-                    "clip_name": f"test_set_3__{stem}",
-                    "video_path": video_path,
-                    "anno_path": anno_path,
-                    "user_id": DATASET_USER_MAP["test_set_3"],
-                    "source": "test_set_3",
-                }
-            )
+            for video_path in sorted(song_root.glob("*.mp4")):
+                stem = video_path.stem
+                anno_path = gt_root / f"gt_{stem}.csv"
+                if not anno_path.exists():
+                    continue
+                entries.append(
+                    {
+                        "clip_name": f"{source['label']}__{stem}",
+                        "video_path": video_path,
+                        "anno_path": anno_path,
+                        "user_id": source["user_id"],
+                        "source": source["label"],
+                    }
+                )
 
     return entries
 
@@ -343,7 +349,7 @@ class FullClipRollingDataset(Dataset):
             raise ValueError(
                 "No valid clips found. Expected either:\n"
                 "1) legacy full_clips layout under clips_root, or\n"
-                "2) data-root layout with test_dataset/full_clips, test_set_2/songs+gt, test_set_3/songs+gt.\n"
+                "2) data-root layout with bundled dataset folders (for example test_dataset/full_clips and test_set_*/songs+gt).\n"
                 f"clips_root={self.clips_root}"
             )
 
