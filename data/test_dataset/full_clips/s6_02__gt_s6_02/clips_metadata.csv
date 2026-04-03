@@ -1,2 +1,0 @@
-clip_index,clip_name,video_clip_path,annotation_clip_path,start_sec,end_sec,duration_sec,annotation_rows
-0,full_s6_02,../data/test_dataset/full_clips/s6_02__gt_s6_02/video/full_s6_02.mp4,../data/test_dataset/full_clips/s6_02__gt_s6_02/annotation/full_s6_02.csv,0.000,41.517,41.517,2491

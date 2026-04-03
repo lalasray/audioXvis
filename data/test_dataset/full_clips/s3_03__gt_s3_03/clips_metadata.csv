@@ -1,2 +1,0 @@
-clip_index,clip_name,video_clip_path,annotation_clip_path,start_sec,end_sec,duration_sec,annotation_rows
-0,full_s3_03,../data/test_dataset/full_clips/s3_03__gt_s3_03/video/full_s3_03.mp4,../data/test_dataset/full_clips/s3_03__gt_s3_03/annotation/full_s3_03.csv,0.000,30.133,30.133,1808
