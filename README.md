@@ -117,16 +117,6 @@ Each extracted frame includes:
 - angles `angle_a_deg`, `angle_b_deg`, `angle_c_deg`
 - `angle_sum_deg` as a geometry sanity check
 
-## Data Notes
-
-The repository still supports the legacy bundled folder names used during development, but the code and docs now avoid user-specific absolute paths and machine-specific assumptions.
-
-Supported discovery includes:
-
-- legacy `full_clips/<clip>/{video,annotation}`
-- project-root layouts such as `data/test_dataset/full_clips`
-- paired media/GT layouts such as `data/test_set_2/{songs,gt}` and `data/test_set_3/{songs,gt}`
-
 ## Reproducibility Notes
 
 - default checkpoint path: `main/checkpoints/diffusion_v2/best.pt`
