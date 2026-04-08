@@ -353,6 +353,28 @@ def bake_fbx_to_obj_sequence(
         raise FileNotFoundError(
             f"Blender executable not found: {blender_bin}. Install Blender or pass --blender_bin /full/path/to/blender"
         )
+    # if user accidentally passed the launcher executable on Windows try to
+    # locate the actual blender.exe in the same directory
+    base = os.path.basename(blender_resolved).lower()
+    if "launcher" in base:
+        candidate = os.path.join(os.path.dirname(blender_resolved), "blender.exe")
+        if os.path.exists(candidate):
+            blender_resolved = candidate
+    # guard against the PyPI "blender" stub package which is not the real
+    # blender binary.  Running `--version` should return a string containing
+    # the word "Blender"; if it fails we give a clearer message so users know
+    # to uninstall the pip package or point to the real executable.
+    try:
+        proc = subprocess.run([blender_resolved, "--version"], capture_output=True, text=True, timeout=5)
+        if proc.returncode != 0 or "Blender" not in proc.stdout:
+            raise RuntimeError
+    except Exception:
+        raise RuntimeError(
+            f"'{blender_resolved}' does not appear to be a Blender executable.\n"
+            "You may have accidentally installed the PyPI 'blender' package.\n"
+            "Uninstall it (pip uninstall blender) or use --blender_bin to point to a "
+            "real blender binary."
+        )
 
     out_path = Path(out_dir).resolve()
     out_path.mkdir(parents=True, exist_ok=True)

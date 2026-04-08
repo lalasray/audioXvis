@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import torch
 import json
 import mimetypes
 import os
@@ -17,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 import argparse
-import importlib
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAIN_DIR = REPO_ROOT / "main"

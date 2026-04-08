@@ -77,6 +77,23 @@ def convert_with_blender(input_path: Path, output_path: Path) -> tuple[bool, str
     blender = shutil.which("blender")
     if blender is None:
         return False, "Blender not found in PATH."
+    # if the launcher was provided, try to use the actual exe sibling
+    base = os.path.basename(blender).lower()
+    if "launcher" in base:
+        maybe = os.path.join(os.path.dirname(blender), "blender.exe")
+        if os.path.exists(maybe):
+            blender = maybe
+    # ensure it's the actual program and not the PyPI stub
+    try:
+        proc = run_cmd([blender, "--version"])
+        if proc.returncode != 0 or "Blender" not in proc.stdout:
+            return False, (
+                "Found an executable named 'blender' but it doesn't seem to be the "
+                "real application. If you installed the 'blender' pip package, remove it "
+                "(pip uninstall blender) or specify the full path to a proper Blender "
+                "executable using --blender.")
+    except Exception:
+        return False, "Unable to execute the candidate blender binary."
 
     with tempfile.TemporaryDirectory() as td:
         script_path = Path(td) / "blender_convert.py"
