@@ -29,8 +29,8 @@ If you clone the repository on a new machine, you will need to place the require
 Create the conda environment from `environment.yml`:
 
 ```bash
-/home/lala/miniconda3/bin/conda env create -f environment.yml
-/home/lala/miniconda3/bin/conda activate audio2vis
+/home/usr/miniconda3/bin/conda env create -f environment.yml
+/home/usr/miniconda3/bin/conda activate audio2vis
 ```
 
 If `conda` is already initialized in your shell, the shorter form also works:
