@@ -223,6 +223,8 @@ class RuntimeState:
     frame_index: int = 25
     angles: tuple[float, float, float] = (60.0, 60.0, 60.0)
     waveform: list[float] | None = None
+    pitch_hz: float = 0.0
+    pitch_contour: list[float] | None = None
     progress: float = 0.0
     elapsed_sec: float = 0.0
     duration_sec: float = 0.0
@@ -255,6 +257,7 @@ class Audio2VisService:
                 state=RuntimeState(
                     source_label="Primary source",
                     waveform=[0.0] * 180,
+                    pitch_contour=[0.0] * 180,
                     updated_at=time.time(),
                 ),
             ),
@@ -263,6 +266,7 @@ class Audio2VisService:
                 state=RuntimeState(
                     source_label="Comparison source",
                     waveform=[0.0] * 180,
+                    pitch_contour=[0.0] * 180,
                     updated_at=time.time(),
                 ),
             ),
@@ -329,6 +333,8 @@ class Audio2VisService:
                 "frameIndex": track.state.frame_index,
                 "angles": {"a": track.state.angles[0], "b": track.state.angles[1], "c": track.state.angles[2]},
                 "waveform": track.state.waveform,
+                "pitchHz": track.state.pitch_hz,
+                "pitchContour": track.state.pitch_contour,
                 "progress": track.state.progress,
                 "elapsedSec": track.state.elapsed_sec,
                 "durationSec": track.state.duration_sec,
@@ -382,6 +388,11 @@ class Audio2VisService:
         idx = np.linspace(0, samples.size - 1, points).astype(np.int32)
         view = np.clip(samples[idx], -1.0, 1.0)
         return view.astype(np.float32).tolist()
+
+    def _append_pitch(self, track: TrackSession, pitch_hz: float, points: int = 180) -> list[float]:
+        contour = list(track.state.pitch_contour or [0.0] * points)
+        contour.append(float(pitch_hz))
+        return contour[-points:]
 
     def _resample_audio(self, samples: np.ndarray, source_sr: int, target_sr: int) -> np.ndarray:
         if source_sr == target_sr or samples.size == 0:
@@ -612,6 +623,8 @@ class Audio2VisService:
             elapsed_sec=0.0,
             duration_sec=0.0,
             waveform=[0.0] * 180,
+            pitch_hz=0.0,
+            pitch_contour=[0.0] * 180,
             frame_index=int(round(neutral)),
             angles=(60.0, 60.0, 60.0),
             error=None,
@@ -661,7 +674,7 @@ class Audio2VisService:
             return 0.0, confidence
         return float(sr / max(lag, 1e-6)), confidence
 
-    def _predict_angles(self, audio_window: np.ndarray) -> tuple[float, float, float]:
+    def _predict_angles(self, audio_window: np.ndarray) -> tuple[float, float, float, float]:
         rms = float(np.sqrt(np.mean(audio_window * audio_window) + 1e-12))
         db = 20.0 * np.log10(rms + 1e-6)
         loudness = float(np.clip((db + 55.0) / 45.0, 0.0, 1.0))
@@ -685,7 +698,7 @@ class Audio2VisService:
             a *= scale
             c *= scale
         b = float(180.0 - a - c)
-        return a, b, c
+        return a, b, c, float(pitch_hz)
 
     def _inference_loop(self, track_key: str) -> None:
         track = self._get_track(track_key)
@@ -695,7 +708,7 @@ class Audio2VisService:
             except queue.Empty:
                 continue
             try:
-                a, b, c = self._predict_angles(window)
+                a, b, c, pitch_hz = self._predict_angles(window)
                 driver = float((a + b) * 0.5)
                 frame_float = self._map_angle_to_frame(driver)
                 frame_index = int(round(np.clip(frame_float, 0.0, self.mesh_cache.meta["frameCount"] - 1)))
@@ -703,6 +716,8 @@ class Audio2VisService:
                     track_key,
                     frame_index=frame_index,
                     angles=(a, b, c),
+                    pitch_hz=pitch_hz,
+                    pitch_contour=self._append_pitch(track, pitch_hz),
                     error=None,
                 )
             except Exception as exc:

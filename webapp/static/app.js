@@ -5,7 +5,6 @@ const state = {
   renderers: {},
   events: null,
   viewMode: "single",
-  smoothedSimilarity: null,
 };
 
 const els = {
@@ -46,6 +45,7 @@ const els = {
   timeLabel: document.getElementById("timeLabel"),
   progressFill: document.getElementById("progressFill"),
   waveCanvas: document.getElementById("waveCanvas"),
+  pitchCanvas: document.getElementById("pitchCanvas"),
   glCanvas: document.getElementById("glCanvas"),
   glPrimaryCanvas: document.getElementById("glPrimaryCanvas"),
   glCompareCanvas: document.getElementById("glCompareCanvas"),
@@ -109,6 +109,62 @@ function drawWaveform(primary = [], compare = []) {
 
   drawArea(primary, gradient);
   drawArea(compare, "rgba(255, 167, 88, 0.5)");
+}
+
+function drawPitch(primary = [], compare = []) {
+  const canvas = els.pitchCanvas;
+  const ctx = canvas.getContext("2d");
+  const { width, height } = canvas;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(12, 16, 22, 0.95)";
+  ctx.fillRect(0, 0, width, height);
+
+  const minHz = 55;
+  const maxHz = 500;
+  const minLog = Math.log2(minHz);
+  const maxLog = Math.log2(maxHz);
+  const yForHz = (hz) => {
+    if (!hz || hz <= 0) return null;
+    const t = (Math.log2(Math.max(minHz, Math.min(maxHz, hz))) - minLog) / (maxLog - minLog);
+    return height - 12 - t * (height - 24);
+  };
+
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 1;
+  [100, 200, 300, 400].forEach((hz) => {
+    const y = yForHz(hz);
+    if (y === null) return;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  });
+
+  const drawLine = (samples, strokeStyle) => {
+    if (!samples.length) return;
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < samples.length; i += 1) {
+      const y = yForHz(samples[i]);
+      if (y === null) {
+        started = false;
+        continue;
+      }
+      const x = (i / Math.max(samples.length - 1, 1)) * width;
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  };
+
+  drawLine(primary, "#7fe59d");
+  drawLine(compare, "rgba(255, 85, 70, 0.9)");
 }
 
 function makeMat4() {
@@ -178,25 +234,6 @@ function createShader(gl, type, source) {
     throw new Error(gl.getShaderInfoLog(shader));
   }
   return shader;
-}
-
-function mixColor(a, b, t) {
-  const amount = Math.max(0, Math.min(1, t));
-  return [
-    a[0] * (1 - amount) + b[0] * amount,
-    a[1] * (1 - amount) + b[1] * amount,
-    a[2] * (1 - amount) + b[2] * amount,
-  ];
-}
-
-function smoothSimilarity(rawSimilarity) {
-  const similarity = Math.max(0, Math.min(1, rawSimilarity));
-  if (state.smoothedSimilarity === null) {
-    state.smoothedSimilarity = similarity;
-  } else {
-    state.smoothedSimilarity = state.smoothedSimilarity * 0.82 + similarity * 0.18;
-  }
-  return state.smoothedSimilarity;
 }
 
 class MeshRenderer {
@@ -502,9 +539,7 @@ function updateUi(runtime) {
   els.progressFill.style.width = `${(primary.progress || 0) * 100}%`;
 
   drawWaveform(primary.waveform || [], compare.waveform || []);
-  const rawSimilarity = 1 - Math.max(0, Math.min(1, comparison.meanAbsAngleDelta / 14));
-  const smoothedSimilarity = smoothSimilarity(rawSimilarity);
-  const compareTint = mixColor([1.0, 0.05, 0.04], [0.05, 0.9, 0.35], smoothedSimilarity);
+  drawPitch(primary.pitchContour || [], compare.pitchContour || []);
   const overlayOffset = (state.meshMeta?.bounds?.scale || 80) * 0.0000035;
 
   state.renderers.single?.setLayers([{ frameIndex: primary.frameIndex, alpha: 1, tintMix: 0, tint: [1, 1, 1] }]);
@@ -513,7 +548,7 @@ function updateUi(runtime) {
     frameIndex: compare.frameIndex,
     alpha: 1,
     tintMix: comparison.active ? 0.9 : 0.25,
-    tint: compareTint,
+    tint: [0.82, 0.84, 0.88],
   }]);
   state.renderers.overlay?.setLayers([
     {
@@ -528,7 +563,7 @@ function updateUi(runtime) {
       frameIndex: compare.frameIndex,
       alpha: comparison.active ? 0.52 : 0,
       tintMix: 1,
-      tint: compareTint,
+      tint: [0.82, 0.84, 0.88],
       offset: [overlayOffset, 0, 0],
       depthTest: false,
     },

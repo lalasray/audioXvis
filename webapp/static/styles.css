@@ -223,6 +223,7 @@ button:hover,
 }
 
 #waveCanvas,
+#pitchCanvas,
 #glCanvas,
 #glPrimaryCanvas,
 #glCompareCanvas,
@@ -235,6 +236,12 @@ button:hover,
 #waveCanvas {
   height: 210px;
   background: linear-gradient(180deg, #091016, #141920);
+}
+
+#pitchCanvas {
+  height: 130px;
+  margin-top: 10px;
+  background: linear-gradient(180deg, #0d1118, #151a22);
 }
 
 .wave-meta {
