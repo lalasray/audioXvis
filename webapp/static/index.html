@@ -41,14 +41,14 @@
 
               <div class="upload-card">
                 <div class="field">
-                  <label for="sampleSelect">Sample Audio</label>
+                  <label for="sampleSelect">Sample Media</label>
                   <select id="sampleSelect"></select>
                 </div>
                 <div class="action-row compact">
                   <button class="play-btn" id="playSampleBtn">Play Sample</button>
                   <label class="upload-btn">
                     Upload
-                    <input type="file" id="fileInput" accept="audio/*" hidden />
+                    <input type="file" id="fileInput" accept="audio/*,video/*" hidden />
                   </label>
                 </div>
               </div>
@@ -62,12 +62,12 @@
 
               <div class="upload-card">
                 <div class="field">
-                  <label for="compareSampleSelect">Comparison Sample</label>
+                  <label for="compareSampleSelect">Comparison Media</label>
                   <select id="compareSampleSelect"></select>
                 </div>
                 <div class="field">
-                  <label for="compareUrlInput">Online Audio Link</label>
-                  <input id="compareUrlInput" type="url" placeholder="https://example.com/voice.mp3" />
+                  <label for="compareUrlInput">Online Media Link</label>
+                  <input id="compareUrlInput" type="url" placeholder="https://example.com/voice.mp4" />
                 </div>
                 <div class="action-row compact">
                   <button class="play-btn" id="playCompareSampleBtn">Play Compare</button>
@@ -76,7 +76,7 @@
                 <div class="action-row compact">
                   <label class="upload-btn compare-upload">
                     Upload Compare
-                    <input type="file" id="compareFileInput" accept="audio/*" hidden />
+                    <input type="file" id="compareFileInput" accept="audio/*,video/*" hidden />
                   </label>
                   <button class="ghost-btn compare-btn" id="stopCompareBtn">Clear Compare</button>
                 </div>

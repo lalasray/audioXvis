@@ -3,8 +3,9 @@ const state = {
   meshMeta: null,
   runtime: null,
   renderers: {},
-  polling: null,
+  events: null,
   viewMode: "single",
+  smoothedSimilarity: null,
 };
 
 const els = {
@@ -179,6 +180,25 @@ function createShader(gl, type, source) {
   return shader;
 }
 
+function mixColor(a, b, t) {
+  const amount = Math.max(0, Math.min(1, t));
+  return [
+    a[0] * (1 - amount) + b[0] * amount,
+    a[1] * (1 - amount) + b[1] * amount,
+    a[2] * (1 - amount) + b[2] * amount,
+  ];
+}
+
+function smoothSimilarity(rawSimilarity) {
+  const similarity = Math.max(0, Math.min(1, rawSimilarity));
+  if (state.smoothedSimilarity === null) {
+    state.smoothedSimilarity = similarity;
+  } else {
+    state.smoothedSimilarity = state.smoothedSimilarity * 0.82 + similarity * 0.18;
+  }
+  return state.smoothedSimilarity;
+}
+
 class MeshRenderer {
   constructor(canvas, meshMeta, positions, colors, normals) {
     this.canvas = canvas;
@@ -189,6 +209,9 @@ class MeshRenderer {
     this.colors = new Uint8Array(colors);
     this.normals = new Float32Array(normals);
     this.layers = [];
+    this.visible = true;
+    this.rafId = null;
+    this.lastUploadedFrame = null;
     this.camera = {
       yaw: 0.5,
       pitch: -0.3,
@@ -202,7 +225,7 @@ class MeshRenderer {
     this._setup();
     this._bindInteractions();
     this.setPreset("front");
-    requestAnimationFrame(() => this.render());
+    this.requestRender();
   }
 
   _setup() {
@@ -214,13 +237,14 @@ class MeshRenderer {
       uniform mat4 uProjection;
       uniform mat4 uView;
       uniform vec3 uTint;
+      uniform vec3 uOffset;
       uniform float uTintMix;
       uniform float uAlpha;
       varying vec3 vColor;
       varying vec3 vNormal;
       varying float vAlpha;
       void main() {
-        vec4 worldPos = vec4(aPosition, 1.0);
+        vec4 worldPos = vec4(aPosition + uOffset, 1.0);
         gl_Position = uProjection * uView * worldPos;
         vColor = mix(aColor, uTint, uTintMix);
         vNormal = aNormal;
@@ -269,6 +293,7 @@ class MeshRenderer {
     this.uProjection = gl.getUniformLocation(program, "uProjection");
     this.uView = gl.getUniformLocation(program, "uView");
     this.uTint = gl.getUniformLocation(program, "uTint");
+    this.uOffset = gl.getUniformLocation(program, "uOffset");
     this.uTintMix = gl.getUniformLocation(program, "uTintMix");
     this.uAlpha = gl.getUniformLocation(program, "uAlpha");
 
@@ -299,6 +324,7 @@ class MeshRenderer {
       lastY = event.clientY;
       this.camera.yaw += dx * 0.01;
       this.camera.pitch = Math.max(-1.4, Math.min(1.4, this.camera.pitch + dy * 0.01));
+      this.requestRender();
     });
 
     const endDrag = (event) => {
@@ -318,6 +344,7 @@ class MeshRenderer {
         this.meshMeta.bounds.scale * 0.6,
         Math.min(this.meshMeta.bounds.scale * 4.2, this.camera.distance * (1 + event.deltaY * 0.001)),
       );
+      this.requestRender();
     }, { passive: false });
   }
 
@@ -332,6 +359,7 @@ class MeshRenderer {
       this.camera.yaw = 0.75;
       this.camera.pitch = -0.45;
     }
+    this.requestRender();
   }
 
   zoomBy(factor) {
@@ -339,25 +367,46 @@ class MeshRenderer {
       this.meshMeta.bounds.scale * 0.6,
       Math.min(this.meshMeta.bounds.scale * 4.2, this.camera.distance * factor),
     );
+    this.requestRender();
   }
 
   setLayers(layers) {
     this.layers = layers;
+    this.requestRender();
   }
 
-  _uploadFrame(frameIndex) {
-    const safeFrame = Math.max(0, Math.min(this.frameCount - 1, frameIndex || 0));
+  setVisible(visible) {
+    this.visible = visible;
+    if (visible) this.requestRender();
+  }
+
+  requestRender() {
+    if (!this.visible || this.rafId !== null) return;
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null;
+      this.render();
+    });
+  }
+
+  _uploadFrame(frameValue) {
+    const safeFrame = Math.round(Math.max(0, Math.min(this.frameCount - 1, Number.isFinite(frameValue) ? frameValue : 0)));
+    if (this.lastUploadedFrame === safeFrame) {
+      return;
+    }
+    this.lastUploadedFrame = safeFrame;
     const start = safeFrame * this.vertexCount * 3;
     const end = start + this.vertexCount * 3;
     const framePositions = this.positions.subarray(start, end);
+
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, framePositions);
   }
 
   render() {
+    if (!this.visible) return;
     const gl = this.gl;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const width = Math.floor(this.canvas.clientWidth * dpr);
     const height = Math.floor(this.canvas.clientHeight * dpr);
     if (this.canvas.width !== width || this.canvas.height !== height) {
@@ -397,14 +446,23 @@ class MeshRenderer {
     const layers = this.layers.length ? this.layers : [{ frameIndex: 0, alpha: 1, tintMix: 0, tint: [1, 1, 1] }];
     for (const layer of layers) {
       if ((layer.alpha ?? 1) <= 0) continue;
+      const useDepth = layer.depthTest ?? true;
+      if (useDepth) {
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthMask(true);
+      } else {
+        gl.disable(gl.DEPTH_TEST);
+        gl.depthMask(false);
+      }
       this._uploadFrame(layer.frameIndex);
       gl.uniform3fv(this.uTint, layer.tint || [1, 1, 1]);
+      gl.uniform3fv(this.uOffset, layer.offset || [0, 0, 0]);
       gl.uniform1f(this.uTintMix, layer.tintMix ?? 0);
       gl.uniform1f(this.uAlpha, layer.alpha ?? 1);
       gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount);
     }
-
-    requestAnimationFrame(() => this.render());
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthMask(true);
   }
 }
 
@@ -413,6 +471,10 @@ function setViewMode(mode) {
   [["single", els.singleStage], ["split", els.splitStage], ["overlay", els.overlayStage]].forEach(([name, element]) => {
     element.classList.toggle("active", name === mode);
   });
+  state.renderers.single?.setVisible(mode === "single");
+  state.renderers.splitPrimary?.setVisible(mode === "split");
+  state.renderers.splitCompare?.setVisible(mode === "split");
+  state.renderers.overlay?.setVisible(mode === "overlay");
   els.modeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.viewMode === mode);
   });
@@ -440,18 +502,36 @@ function updateUi(runtime) {
   els.progressFill.style.width = `${(primary.progress || 0) * 100}%`;
 
   drawWaveform(primary.waveform || [], compare.waveform || []);
+  const rawSimilarity = 1 - Math.max(0, Math.min(1, comparison.meanAbsAngleDelta / 14));
+  const smoothedSimilarity = smoothSimilarity(rawSimilarity);
+  const compareTint = mixColor([1.0, 0.05, 0.04], [0.05, 0.9, 0.35], smoothedSimilarity);
+  const overlayOffset = (state.meshMeta?.bounds?.scale || 80) * 0.0000035;
 
   state.renderers.single?.setLayers([{ frameIndex: primary.frameIndex, alpha: 1, tintMix: 0, tint: [1, 1, 1] }]);
   state.renderers.splitPrimary?.setLayers([{ frameIndex: primary.frameIndex, alpha: 1, tintMix: 0, tint: [1, 1, 1] }]);
   state.renderers.splitCompare?.setLayers([{
     frameIndex: compare.frameIndex,
     alpha: 1,
-    tintMix: comparison.active ? 0.75 : 0.25,
-    tint: [1.0, 0.67, 0.32],
+    tintMix: comparison.active ? 0.9 : 0.25,
+    tint: compareTint,
   }]);
   state.renderers.overlay?.setLayers([
-    { frameIndex: primary.frameIndex, alpha: 1, tintMix: 0, tint: [1, 1, 1] },
-    { frameIndex: compare.frameIndex, alpha: comparison.active ? 0.42 : 0, tintMix: 1, tint: [1.0, 0.55, 0.18] },
+    {
+      frameIndex: primary.frameIndex,
+      alpha: 0.38,
+      tintMix: 1,
+      tint: [0.62, 0.62, 0.62],
+      offset: [-overlayOffset, 0, 0],
+      depthTest: false,
+    },
+    {
+      frameIndex: compare.frameIndex,
+      alpha: comparison.active ? 0.52 : 0,
+      tintMix: 1,
+      tint: compareTint,
+      offset: [overlayOffset, 0, 0],
+      depthTest: false,
+    },
   ]);
 }
 
@@ -478,6 +558,21 @@ async function refreshState() {
   const runtime = await fetchJson("/api/state");
   state.runtime = runtime;
   updateUi(runtime);
+}
+
+function connectEvents() {
+  if (state.events) {
+    state.events.close();
+  }
+  state.events = new EventSource("/api/events");
+  state.events.onmessage = (event) => {
+    const runtime = JSON.parse(event.data);
+    state.runtime = runtime;
+    updateUi(runtime);
+  };
+  state.events.onerror = () => {
+    els.statusLabel.textContent = "Event stream reconnecting";
+  };
 }
 
 async function startMic() {
@@ -552,6 +647,9 @@ function bindControls() {
   els.modeButtons.forEach((button) => {
     button.addEventListener("click", () => setViewMode(button.dataset.viewMode));
   });
+  window.addEventListener("resize", () => {
+    Object.values(state.renderers).forEach((renderer) => renderer?.requestRender());
+  });
 
   els.fileInput.addEventListener("change", async (event) => {
     const [file] = event.target.files || [];
@@ -584,7 +682,7 @@ async function init() {
   bindControls();
   setViewMode("single");
   await refreshState();
-  state.polling = window.setInterval(refreshState, 120);
+  connectEvents();
 }
 
 init().catch((error) => {

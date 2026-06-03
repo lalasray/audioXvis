@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import importlib
-import torch
 import json
 import mimetypes
 import os
 import queue
 import re
 import subprocess
-import sys
 import threading
 import time
 import urllib.request
+import wave
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,42 +21,36 @@ import argparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MAIN_DIR = REPO_ROOT / "main"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 GENERATED_DIR = Path(__file__).resolve().parent / "generated"
 UPLOAD_DIR = GENERATED_DIR / "uploads"
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/audio2vis-mpl")
 MESH_GLOB = str(REPO_ROOT / "main" / "_fbx_baked" / "fbx_frame_*.obj")
 DEFAULT_MTL_OBJ = str(REPO_ROOT / "main" / "_fbx_baked" / "fbx_frame_0000.obj")
-DEFAULT_CKPT = str(REPO_ROOT / "main" / "checkpoints" / "diffusion_v2" / "best.pt")
 HOST = "127.0.0.1"
 PORT = 8765
 SR_MIC = 44100
-SR_MODEL = 22050
+PITCH_SR = 11025
 WINDOW_SEC = 0.5
 HOP_SEC = 0.25
-
-sys.path.append(str(MAIN_DIR))
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"}
+VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
+MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
+MESH_TRIANGLE_STRIDE = max(1, int(os.environ.get("AUDIO2VIS_MESH_STRIDE", "1")))
 
 DEPS_IMPORT_ERROR: Exception | None = None
+SD_IMPORT_ERROR: Exception | None = None
 try:
     np = importlib.import_module("numpy")
-    sd = importlib.import_module("sounddevice")
-    torch = importlib.import_module("torch")
-    torchaudio = importlib.import_module("torchaudio")
-    infer_fullclip = importlib.import_module("infer_fullclip")
-    extract_features = infer_fullclip.extract_features
-    load_model = infer_fullclip.load_model
-    normalize_features = infer_fullclip.normalize_features
 except Exception as exc:  # pragma: no cover - import-time environment guard
     DEPS_IMPORT_ERROR = exc
     np = None
+
+try:
+    sd = importlib.import_module("sounddevice")
+except Exception as exc:  # pragma: no cover - import-time environment guard
+    SD_IMPORT_ERROR = exc
     sd = None
-    torch = None
-    torchaudio = None
-    extract_features = None
-    load_model = None
-    normalize_features = None
 
 
 def natural_sort_key(path_str: str) -> list[Any]:
@@ -144,6 +137,7 @@ class MeshSequenceCache:
     def __init__(self, mesh_glob: str, mtl_source_obj: str):
         self.mesh_glob = mesh_glob
         self.mtl_source_obj = Path(mtl_source_obj)
+        self.triangle_stride = MESH_TRIANGLE_STRIDE
         GENERATED_DIR.mkdir(parents=True, exist_ok=True)
         self.meta_path = GENERATED_DIR / "larynx_sequence.meta.json"
         self.positions_path = GENERATED_DIR / "larynx_sequence.positions.bin"
@@ -153,13 +147,20 @@ class MeshSequenceCache:
 
     def _ensure(self) -> dict[str, Any]:
         if self.meta_path.exists() and self.positions_path.exists() and self.colors_path.exists() and self.normals_path.exists():
-            return json.loads(self.meta_path.read_text(encoding="utf-8"))
+            meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+            if int(meta.get("triangleStride", 1)) == self.triangle_stride:
+                return meta
 
         obj_files = sorted((Path(p) for p in __import__("glob").glob(self.mesh_glob)), key=lambda p: natural_sort_key(str(p)))
         if len(obj_files) < 2:
             raise FileNotFoundError(f"Need at least 2 OBJ frames for sequence rendering: {self.mesh_glob}")
 
         base_vertices, faces, face_materials, _ = parse_obj(obj_files[0])
+        if self.triangle_stride > 1:
+            faces = faces[:: self.triangle_stride]
+            face_materials = face_materials[:: self.triangle_stride]
+            if not faces:
+                raise RuntimeError(f"Triangle stride {self.triangle_stride} removed every mesh face.")
         flat_base = build_flat_frame(base_vertices, faces)
         normals = compute_normals(flat_base)
 
@@ -190,6 +191,7 @@ class MeshSequenceCache:
         meta = {
             "frameCount": len(obj_files),
             "vertexCount": int(flat_base.shape[0]),
+            "triangleStride": self.triangle_stride,
             "bounds": {
                 "min": mins.tolist(),
                 "max": maxs.tolist(),
@@ -219,7 +221,6 @@ class RuntimeState:
     status: str = "Idle"
     source_label: str = "No input"
     frame_index: int = 25
-    frame_float: float = 25.0
     angles: tuple[float, float, float] = (60.0, 60.0, 60.0)
     waveform: list[float] | None = None
     progress: float = 0.0
@@ -240,24 +241,14 @@ class TrackSession:
     stream_thread: threading.Thread | None = None
     audio_buffer: np.ndarray = field(default_factory=lambda: np.zeros(int(WINDOW_SEC * SR_MIC), dtype=np.float32))
     run_token: int = 0
-    smooth_alpha: float = 0.25
-    smoothed_angles: np.ndarray = field(default_factory=lambda: np.array([60.0, 60.0, 60.0], dtype=np.float32))
 
 
 class Audio2VisService:
-    def __init__(self, mesh_cache: MeshSequenceCache, ckpt_path: str):
+    def __init__(self, mesh_cache: MeshSequenceCache):
         self.mesh_cache = mesh_cache
-        self.ckpt_path = ckpt_path
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.window_samples = int(WINDOW_SEC * SR_MIC)
         self.hop_samples = int(HOP_SEC * SR_MIC)
-        self.model = None
-        self.model_lock = threading.Lock()
-        self.y_mean = None
-        self.y_std = None
-        self.sample_steps = None
-        self.feature_stats = None
-        self.user_id = 0
+        self.state_condition = threading.Condition()
         self.tracks = {
             "primary": TrackSession(
                 key="primary",
@@ -296,7 +287,7 @@ class Audio2VisService:
             for path in sorted(REPO_ROOT.glob(pattern))[:4]:
                 if not path.is_file():
                     continue
-                if path.suffix.lower() not in {".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"}:
+                if path.suffix.lower() not in MEDIA_EXTENSIONS:
                     continue
                 resolved = path.resolve()
                 if resolved in seen:
@@ -305,20 +296,14 @@ class Audio2VisService:
                 samples.append({"label": path.name, "path": str(resolved)})
         return samples
 
-    def _ensure_model(self) -> None:
-        if self.model is not None:
-            return
-        with self.model_lock:
-            if self.model is not None:
-                return
-            self.model, self.y_mean, self.y_std, self.sample_steps, _, self.feature_stats = load_model(self.ckpt_path, self.device)
-
     def _get_track(self, track_key: str) -> TrackSession:
         if track_key not in self.tracks:
             raise ValueError(f"Unknown track: {track_key}")
         return self.tracks[track_key]
 
     def get_audio_devices(self) -> list[dict[str, Any]]:
+        if sd is None:
+            return []
         devices = []
         for index, info in enumerate(sd.query_devices()):
             if info.get("max_input_channels", 0) > 0:
@@ -342,7 +327,6 @@ class Audio2VisService:
                 "status": track.state.status,
                 "sourceLabel": track.state.source_label,
                 "frameIndex": track.state.frame_index,
-                "frameFloat": track.state.frame_float,
                 "angles": {"a": track.state.angles[0], "b": track.state.angles[1], "c": track.state.angles[2]},
                 "waveform": track.state.waveform,
                 "progress": track.state.progress,
@@ -389,6 +373,8 @@ class Audio2VisService:
             for key, value in updates.items():
                 setattr(track.state, key, value)
             track.state.updated_at = time.time()
+        with self.state_condition:
+            self.state_condition.notify_all()
 
     def _downsample_waveform(self, samples: np.ndarray, points: int = 180) -> list[float]:
         if samples.size == 0:
@@ -396,6 +382,40 @@ class Audio2VisService:
         idx = np.linspace(0, samples.size - 1, points).astype(np.int32)
         view = np.clip(samples[idx], -1.0, 1.0)
         return view.astype(np.float32).tolist()
+
+    def _resample_audio(self, samples: np.ndarray, source_sr: int, target_sr: int) -> np.ndarray:
+        if source_sr == target_sr or samples.size == 0:
+            return samples.astype(np.float32, copy=False)
+        duration = samples.size / max(source_sr, 1)
+        target_count = max(1, int(round(duration * target_sr)))
+        source_x = np.linspace(0.0, duration, samples.size, endpoint=False)
+        target_x = np.linspace(0.0, duration, target_count, endpoint=False)
+        return np.interp(target_x, source_x, samples).astype(np.float32)
+
+    def _decode_wav(self, audio_path: Path) -> tuple[np.ndarray, int]:
+        with wave.open(str(audio_path), "rb") as handle:
+            channels = handle.getnchannels()
+            sample_width = handle.getsampwidth()
+            sr = handle.getframerate()
+            frames = handle.readframes(handle.getnframes())
+
+        if sample_width == 1:
+            audio = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+        elif sample_width == 2:
+            audio = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+        elif sample_width == 3:
+            raw = np.frombuffer(frames, dtype=np.uint8).reshape(-1, 3)
+            values = raw[:, 0].astype(np.int32) | (raw[:, 1].astype(np.int32) << 8) | (raw[:, 2].astype(np.int32) << 16)
+            values = np.where(values & 0x800000, values - 0x1000000, values)
+            audio = values.astype(np.float32) / 8388608.0
+        elif sample_width == 4:
+            audio = np.frombuffer(frames, dtype="<i4").astype(np.float32) / 2147483648.0
+        else:
+            raise RuntimeError(f"Unsupported WAV sample width: {sample_width} bytes")
+
+        if channels > 1:
+            audio = audio.reshape(-1, channels).mean(axis=1)
+        return np.clip(audio, -1.0, 1.0).astype(np.float32), sr
 
     def _map_angle_to_frame(self, angle_val: float) -> float:
         seq = self.mesh_cache.meta["sequence"]
@@ -415,8 +435,7 @@ class Audio2VisService:
 
     def _load_audio_with_fallback(self, audio_path: Path) -> tuple[np.ndarray, int]:
         try:
-            waveform, sr = torchaudio.load(str(audio_path))
-            return waveform[0].numpy().astype(np.float32), int(sr)
+            return self._decode_wav(audio_path)
         except Exception as exc:
             cmd = [
                 "ffmpeg",
@@ -459,6 +478,8 @@ class Audio2VisService:
         return audio_callback
 
     def start_microphone(self, track_key: str, device_id: int | None) -> None:
+        if sd is None:
+            raise RuntimeError("Microphone capture needs sounddevice. Upload audio or video, or install sounddevice for live input.")
         track = self._get_track(track_key)
         self.stop(track_key)
         track.run_token += 1
@@ -492,14 +513,14 @@ class Audio2VisService:
         track.stop_event = threading.Event()
         path = Path(audio_path).resolve()
         if not path.exists():
-            raise FileNotFoundError(f"Audio file not found: {path}")
+            raise FileNotFoundError(f"Media file not found: {path}")
 
         waveform_np, source_sr = self._load_audio_with_fallback(path)
         duration_sec = float(waveform_np.shape[-1] / max(source_sr, 1))
         self._set_state(
             track_key,
             mode="file",
-            status="Playing audio through inference",
+            status="Playing audio through pitch/loudness analysis",
             source_label=path.name,
             progress=0.0,
             elapsed_sec=0.0,
@@ -537,7 +558,7 @@ class Audio2VisService:
     ) -> None:
         track = self._get_track(track_key)
         if source_sr != SR_MIC:
-            audio_np = torchaudio.functional.resample(torch.from_numpy(waveform_np), source_sr, SR_MIC).numpy()
+            audio_np = self._resample_audio(waveform_np, source_sr, SR_MIC)
         else:
             audio_np = waveform_np
         idx = 0
@@ -549,7 +570,7 @@ class Audio2VisService:
                 waveform=self._downsample_waveform(chunk),
                 elapsed_sec=min(idx / SR_MIC, duration_sec),
                 progress=float(np.clip((idx / SR_MIC) / max(duration_sec, 1e-6), 0.0, 1.0)),
-                status="Driving larynx sequence from audio",
+                status="Driving larynx sequence from pitch and loudness",
             )
             try:
                 track.inf_queue.put(chunk.copy(), block=False)
@@ -581,7 +602,6 @@ class Audio2VisService:
             track.audio_stream = None
         track.stream_thread = None
         track.audio_buffer = np.zeros(self.window_samples, dtype=np.float32)
-        track.smoothed_angles = np.array([60.0, 60.0, 60.0], dtype=np.float32)
         neutral = float(self.mesh_cache.meta["sequence"]["neutralFrame"])
         self._set_state(
             track_key,
@@ -593,26 +613,78 @@ class Audio2VisService:
             duration_sec=0.0,
             waveform=[0.0] * 180,
             frame_index=int(round(neutral)),
-            frame_float=neutral,
             angles=(60.0, 60.0, 60.0),
             error=None,
         )
 
+    def _estimate_pitch_hz(self, audio_window: np.ndarray, sr: int = SR_MIC) -> tuple[float, float]:
+        centered = audio_window.astype(np.float32) - float(np.mean(audio_window))
+        rms = float(np.sqrt(np.mean(centered * centered) + 1e-12))
+        if rms < 0.006:
+            return 0.0, 0.0
+
+        if sr > PITCH_SR:
+            step = max(1, int(round(sr / PITCH_SR)))
+            centered = centered[::step]
+            sr = int(round(sr / step))
+
+        windowed = centered * np.hanning(centered.size).astype(np.float32)
+        min_lag = max(1, int(sr / 500.0))
+        max_lag = min(int(sr / 55.0), windowed.size - 1)
+        if max_lag <= min_lag:
+            return 0.0, 0.0
+
+        corr = np.correlate(windowed, windowed, mode="full")[windowed.size - 1 :]
+        corr0 = max(float(corr[0]), 1e-9)
+        search = corr[min_lag:max_lag]
+        if search.size == 0:
+            return 0.0, 0.0
+
+        best_value = float(np.max(search))
+        rel_idx = int(np.argmax(search))
+        if search.size >= 3:
+            peaks = np.flatnonzero((search[1:-1] > search[:-2]) & (search[1:-1] >= search[2:])) + 1
+            strong_peaks = peaks[search[peaks] >= best_value * 0.72]
+            if strong_peaks.size:
+                rel_idx = int(strong_peaks[0])
+        lag = float(min_lag + rel_idx)
+        if 1 <= min_lag + rel_idx < corr.size - 1:
+            left = float(corr[min_lag + rel_idx - 1])
+            mid = float(corr[min_lag + rel_idx])
+            right = float(corr[min_lag + rel_idx + 1])
+            denom = left - 2.0 * mid + right
+            if abs(denom) > 1e-9:
+                lag += 0.5 * (left - right) / denom
+
+        confidence = float(np.clip(corr[int(round(lag))] / corr0, 0.0, 1.0))
+        if confidence < 0.2:
+            return 0.0, confidence
+        return float(sr / max(lag, 1e-6)), confidence
+
     def _predict_angles(self, audio_window: np.ndarray) -> tuple[float, float, float]:
-        self._ensure_model()
-        with self.model_lock:
-            y_resampled = torchaudio.functional.resample(torch.from_numpy(audio_window), SR_MIC, SR_MODEL).numpy()
-            feats = extract_features(y_resampled, sr=SR_MODEL)
-            if self.feature_stats is not None:
-                feats = normalize_features(feats, self.feature_stats)
-            x_dict = {key: torch.from_numpy(value).unsqueeze(0).to(self.device) for key, value in feats.items()}
-            uid = torch.full((1,), self.user_id, dtype=torch.long, device=self.device)
-            with torch.no_grad():
-                pred_norm = self.model.sample_ddim(x_dict, sample_steps=self.sample_steps, user_id=uid)
-                pred = pred_norm * self.y_std + self.y_mean
-            a = float(pred[0, 0].item())
-            c = float(pred[0, 1].item())
-            b = float(180.0 - a - c)
+        rms = float(np.sqrt(np.mean(audio_window * audio_window) + 1e-12))
+        db = 20.0 * np.log10(rms + 1e-6)
+        loudness = float(np.clip((db + 55.0) / 45.0, 0.0, 1.0))
+
+        pitch_hz, confidence = self._estimate_pitch_hz(audio_window)
+        if pitch_hz > 0.0:
+            pitch = float(np.clip((np.log2(pitch_hz) - np.log2(80.0)) / (np.log2(420.0) - np.log2(80.0)), 0.0, 1.0))
+        else:
+            pitch = 0.5
+
+        voiced = float(np.clip(confidence * 1.7, 0.0, 1.0))
+        a = 38.0 + 47.0 * loudness + 7.0 * (pitch - 0.5)
+        c = 38.0 + 35.0 * pitch * voiced + 12.0 * loudness
+        if voiced < 0.25:
+            c = 50.0 + 10.0 * loudness
+
+        a = float(np.clip(a, 28.0, 88.0))
+        c = float(np.clip(c, 28.0, 88.0))
+        if a + c > 155.0:
+            scale = 155.0 / (a + c)
+            a *= scale
+            c *= scale
+        b = float(180.0 - a - c)
         return a, b, c
 
     def _inference_loop(self, track_key: str) -> None:
@@ -624,20 +696,13 @@ class Audio2VisService:
                 continue
             try:
                 a, b, c = self._predict_angles(window)
-                target = np.array([a, b, c], dtype=np.float32)
-                track.smoothed_angles = track.smooth_alpha * target + (1.0 - track.smooth_alpha) * track.smoothed_angles
-                driver = float((track.smoothed_angles[0] + track.smoothed_angles[1]) * 0.5)
+                driver = float((a + b) * 0.5)
                 frame_float = self._map_angle_to_frame(driver)
                 frame_index = int(round(np.clip(frame_float, 0.0, self.mesh_cache.meta["frameCount"] - 1)))
                 self._set_state(
                     track_key,
-                    frame_float=frame_float,
                     frame_index=frame_index,
-                    angles=(
-                        float(track.smoothed_angles[0]),
-                        float(track.smoothed_angles[1]),
-                        float(track.smoothed_angles[2]),
-                    ),
+                    angles=(a, b, c),
                     error=None,
                 )
             except Exception as exc:
@@ -665,6 +730,8 @@ class AppHandler(BaseHTTPRequestHandler):
             return self._send_json(self.service.get_config())
         if path == "/api/state":
             return self._send_json(self.service.get_state())
+        if path == "/api/events":
+            return self._send_events()
         if path == "/mesh/meta":
             return self._send_json(self.service.mesh_cache.meta)
         if path == "/mesh/positions.bin":
@@ -726,6 +793,34 @@ class AppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _send_events(self) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        last_updated = -1.0
+        while True:
+            state = self.service.get_state()
+            updated = max(track["updatedAt"] for track in state["tracks"].values())
+            if updated != last_updated:
+                last_updated = updated
+                raw = f"data: {json.dumps(state)}\n\n".encode("utf-8")
+                try:
+                    self.wfile.write(raw)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+            with self.service.state_condition:
+                notified = self.service.state_condition.wait(timeout=15.0)
+            if not notified:
+                try:
+                    self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+
     def _serve_file(self, path: Path) -> None:
         resolved = path.resolve()
         allowed_roots = [STATIC_DIR.resolve(), GENERATED_DIR.resolve()]
@@ -746,18 +841,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the Audio2Vis local web app.")
     parser.add_argument("--host", default=HOST, help="Host interface to bind.")
     parser.add_argument("--port", type=int, default=PORT, help="Port to bind.")
-    parser.add_argument("--ckpt", default=DEFAULT_CKPT, help="Path to model checkpoint.")
     args = parser.parse_args()
 
-    if DEPS_IMPORT_ERROR is not None:
+    if np is None:
         raise RuntimeError(
             "Missing runtime dependencies for the web app. "
             "Install requirements.txt before launching the server."
         ) from DEPS_IMPORT_ERROR
+    if SD_IMPORT_ERROR is not None:
+        print("Microphone capture disabled: sounddevice is not installed.")
 
     print("Preparing mesh cache for the web viewer...")
     mesh_cache = MeshSequenceCache(mesh_glob=MESH_GLOB, mtl_source_obj=DEFAULT_MTL_OBJ)
-    service = Audio2VisService(mesh_cache, ckpt_path=args.ckpt)
+    service = Audio2VisService(mesh_cache)
     httpd = ThreadingHTTPServer((args.host, args.port), AppHandler)
     httpd.service = service  # type: ignore[attr-defined]
     print(f"Audio2Vis web app running at http://{args.host}:{args.port}")
