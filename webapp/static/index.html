@@ -32,11 +32,10 @@
               <div class="device-card">
                 <label for="micSelect">Microphone Input</label>
                 <select id="micSelect"></select>
-              </div>
-
-              <div class="action-row">
-                <button class="record-btn" id="startMicBtn">Rec</button>
-                <button class="ghost-btn" id="stopBtn">Stop</button>
+                <div class="action-row compact">
+                  <button class="record-btn" id="startMicBtn">Rec</button>
+                  <button class="ghost-btn" id="stopBtn">Stop</button>
+                </div>
               </div>
 
               <div class="upload-card">
@@ -62,22 +61,17 @@
 
               <div class="upload-card">
                 <div class="field">
-                  <label for="compareSampleSelect">Comparison Media</label>
+                  <label for="compareSampleSelect">Uploaded Compare Media</label>
                   <select id="compareSampleSelect"></select>
-                </div>
-                <div class="field">
-                  <label for="compareUrlInput">Online Media Link</label>
-                  <input id="compareUrlInput" type="url" placeholder="https://example.com/voice.mp4" />
                 </div>
                 <div class="action-row compact">
                   <button class="play-btn" id="playCompareSampleBtn">Play Compare</button>
-                  <button class="ghost-btn compare-btn" id="playCompareUrlBtn">Load URL</button>
-                </div>
-                <div class="action-row compact">
                   <label class="upload-btn compare-upload">
                     Upload Compare
                     <input type="file" id="compareFileInput" accept="audio/*,video/*" hidden />
                   </label>
+                </div>
+                <div class="action-row compact">
                   <button class="ghost-btn compare-btn" id="stopCompareBtn">Clear Compare</button>
                 </div>
               </div>
@@ -135,8 +129,9 @@
         <section class="viewer-panel panel">
           <div class="viewer-toolbar top">
             <button class="tool-btn" id="frontViewBtn">Front</button>
+            <button class="tool-btn" id="backViewBtn">Back</button>
             <button class="tool-btn" id="sideViewBtn">Side</button>
-            <button class="tool-btn" id="tiltViewBtn">Tilt</button>
+            <button class="tool-btn" id="topViewBtn">Top</button>
           </div>
           <div class="viewer-toolbar view-switcher">
             <button class="tool-btn mode-btn active" data-view-mode="single">Solo</button>
@@ -178,6 +173,9 @@
         <div class="transport-row">
           <button class="play-btn square" id="transportPlayBtn">▶</button>
           <button class="ghost-btn square" id="transportStopBtn">■</button>
+          <button class="ghost-btn audio-mute-btn" id="mutePrimaryBtn" title="Mute main audio playback" hidden>Mute Main</button>
+          <button class="ghost-btn audio-mute-btn" id="muteCompareBtn" title="Mute compare audio playback" hidden>Mute Compare</button>
+          <button class="ghost-btn audio-mute-btn" id="muteBothBtn" title="Mute all audio playback" hidden>Mute Both</button>
           <div class="progress-wrap">
             <div class="progress-track">
               <div class="progress-fill" id="progressFill"></div>

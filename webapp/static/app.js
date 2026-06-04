@@ -5,6 +5,22 @@ const state = {
   renderers: {},
   events: null,
   viewMode: "single",
+  audioPlayers: {
+    primary: new Audio(),
+    compare: new Audio(),
+  },
+  audioMuted: {
+    primary: false,
+    compare: false,
+  },
+  audioActive: {
+    primary: false,
+    compare: false,
+  },
+  overlayHistory: {
+    primary: [],
+    compare: [],
+  },
 };
 
 const els = {
@@ -13,21 +29,23 @@ const els = {
   fileInput: document.getElementById("fileInput"),
   compareSampleSelect: document.getElementById("compareSampleSelect"),
   compareFileInput: document.getElementById("compareFileInput"),
-  compareUrlInput: document.getElementById("compareUrlInput"),
   startMicBtn: document.getElementById("startMicBtn"),
   playSampleBtn: document.getElementById("playSampleBtn"),
   playCompareSampleBtn: document.getElementById("playCompareSampleBtn"),
-  playCompareUrlBtn: document.getElementById("playCompareUrlBtn"),
   stopBtn: document.getElementById("stopBtn"),
   stopCompareBtn: document.getElementById("stopCompareBtn"),
   stopBtnTop: document.getElementById("stopBtnTop"),
   transportStopBtn: document.getElementById("transportStopBtn"),
   transportPlayBtn: document.getElementById("transportPlayBtn"),
+  mutePrimaryBtn: document.getElementById("mutePrimaryBtn"),
+  muteCompareBtn: document.getElementById("muteCompareBtn"),
+  muteBothBtn: document.getElementById("muteBothBtn"),
   refreshBtn: document.getElementById("refreshBtn"),
   resetViewBtn: document.getElementById("resetViewBtn"),
   frontViewBtn: document.getElementById("frontViewBtn"),
+  backViewBtn: document.getElementById("backViewBtn"),
   sideViewBtn: document.getElementById("sideViewBtn"),
-  tiltViewBtn: document.getElementById("tiltViewBtn"),
+  topViewBtn: document.getElementById("topViewBtn"),
   zoomInBtn: document.getElementById("zoomInBtn"),
   zoomOutBtn: document.getElementById("zoomOutBtn"),
   angleA: document.getElementById("angleA"),
@@ -69,6 +87,83 @@ function formatTime(seconds) {
   const mins = Math.floor(total / 60);
   const secs = total % 60;
   return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
+function mediaUrlForPath(path) {
+  return `/api/media?path=${encodeURIComponent(path)}`;
+}
+
+function updateMuteButton() {
+  Object.entries(state.audioPlayers).forEach(([track, audio]) => {
+    audio.muted = Boolean(state.audioMuted[track]);
+  });
+
+  const primaryActive = state.audioActive.primary;
+  const compareActive = state.audioActive.compare;
+  els.mutePrimaryBtn.hidden = !primaryActive;
+  els.muteCompareBtn.hidden = !compareActive;
+  els.muteBothBtn.hidden = !(primaryActive && compareActive);
+
+  els.mutePrimaryBtn.textContent = state.audioMuted.primary ? "Unmute Main" : "Mute Main";
+  els.muteCompareBtn.textContent = state.audioMuted.compare ? "Unmute Compare" : "Mute Compare";
+  els.muteBothBtn.textContent = state.audioMuted.primary && state.audioMuted.compare ? "Unmute Both" : "Mute Both";
+  els.mutePrimaryBtn.classList.toggle("muted", state.audioMuted.primary);
+  els.muteCompareBtn.classList.toggle("muted", state.audioMuted.compare);
+  els.muteBothBtn.classList.toggle("muted", state.audioMuted.primary && state.audioMuted.compare);
+}
+
+function stopBrowserAudio(track = null) {
+  const entries = track
+    ? [[track, state.audioPlayers[track]]].filter(([, audio]) => Boolean(audio))
+    : Object.entries(state.audioPlayers);
+  entries.forEach(([trackKey, audio]) => {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    state.audioActive[trackKey] = false;
+  });
+  updateMuteButton();
+}
+
+async function playBrowserAudio(track, path) {
+  const audio = state.audioPlayers[track];
+  if (!audio) return;
+  stopBrowserAudio(track);
+  audio.src = mediaUrlForPath(path);
+  audio.currentTime = 0;
+  audio.muted = Boolean(state.audioMuted[track]);
+  try {
+    await audio.play();
+    state.audioActive[track] = true;
+    updateMuteButton();
+  } catch (error) {
+    els.statusLabel.textContent = `Audio playback failed: ${error.message}`;
+  }
+}
+
+function toggleTrackMute(track) {
+  state.audioMuted[track] = !state.audioMuted[track];
+  updateMuteButton();
+}
+
+function toggleBothMute() {
+  const shouldMute = !(state.audioMuted.primary && state.audioMuted.compare);
+  state.audioMuted.primary = shouldMute;
+  state.audioMuted.compare = shouldMute;
+  updateMuteButton();
+}
+
+function addMediaOption(select, path, label) {
+  const existing = Array.from(select.options).find((option) => option.value === path);
+  if (existing) {
+    select.value = path;
+    return;
+  }
+  const option = document.createElement("option");
+  option.value = path;
+  option.textContent = label;
+  select.appendChild(option);
+  select.value = path;
 }
 
 function drawWaveform(primary = [], compare = []) {
@@ -275,13 +370,14 @@ class MeshRenderer {
       uniform mat4 uView;
       uniform vec3 uTint;
       uniform vec3 uOffset;
+      uniform float uScale;
       uniform float uTintMix;
       uniform float uAlpha;
       varying vec3 vColor;
       varying vec3 vNormal;
       varying float vAlpha;
       void main() {
-        vec4 worldPos = vec4(aPosition + uOffset, 1.0);
+        vec4 worldPos = vec4(aPosition * uScale + uOffset, 1.0);
         gl_Position = uProjection * uView * worldPos;
         vColor = mix(aColor, uTint, uTintMix);
         vNormal = aNormal;
@@ -331,6 +427,7 @@ class MeshRenderer {
     this.uView = gl.getUniformLocation(program, "uView");
     this.uTint = gl.getUniformLocation(program, "uTint");
     this.uOffset = gl.getUniformLocation(program, "uOffset");
+    this.uScale = gl.getUniformLocation(program, "uScale");
     this.uTintMix = gl.getUniformLocation(program, "uTintMix");
     this.uAlpha = gl.getUniformLocation(program, "uAlpha");
 
@@ -389,12 +486,15 @@ class MeshRenderer {
     if (name === "front") {
       this.camera.yaw = 0.0;
       this.camera.pitch = 0.0;
+    } else if (name === "back") {
+      this.camera.yaw = Math.PI;
+      this.camera.pitch = 0.0;
     } else if (name === "side") {
       this.camera.yaw = Math.PI / 2;
       this.camera.pitch = 0.0;
-    } else if (name === "tilt") {
-      this.camera.yaw = 0.75;
-      this.camera.pitch = -0.45;
+    } else if (name === "top") {
+      this.camera.yaw = Math.PI;
+      this.camera.pitch = Math.PI / 2;
     }
     this.requestRender();
   }
@@ -494,6 +594,7 @@ class MeshRenderer {
       this._uploadFrame(layer.frameIndex);
       gl.uniform3fv(this.uTint, layer.tint || [1, 1, 1]);
       gl.uniform3fv(this.uOffset, layer.offset || [0, 0, 0]);
+      gl.uniform1f(this.uScale, layer.scale ?? 1);
       gl.uniform1f(this.uTintMix, layer.tintMix ?? 0);
       gl.uniform1f(this.uAlpha, layer.alpha ?? 1);
       gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount);
@@ -515,6 +616,96 @@ function setViewMode(mode) {
   els.modeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.viewMode === mode);
   });
+}
+
+function pushOverlayFrame(track, frameIndex) {
+  const history = state.overlayHistory[track];
+  if (!history) return;
+  const last = history[history.length - 1];
+  if (last !== frameIndex) {
+    history.push(frameIndex);
+    if (history.length > 12) {
+      history.shift();
+    }
+  }
+}
+
+function resetOverlayHistory() {
+  state.overlayHistory.primary = [];
+  state.overlayHistory.compare = [];
+}
+
+function buildDifferenceOverlayLayers(primary, compare, comparison) {
+  const overlayOffset = (state.meshMeta?.bounds?.scale || 80) * 0.0000035;
+  if (!comparison.active) {
+    resetOverlayHistory();
+    return [{
+      frameIndex: primary.frameIndex,
+      alpha: 0.42,
+      tintMix: 0.75,
+      tint: [0.68, 0.7, 0.74],
+      offset: [0, 0, 0],
+      depthTest: false,
+    }];
+  }
+
+  pushOverlayFrame("primary", primary.frameIndex);
+  pushOverlayFrame("compare", compare.frameIndex);
+  const deltaStrength = Math.min(Math.max(comparison.meanAbsAngleDelta / 28, 0), 1);
+  const frameStrength = Math.min(Math.abs(comparison.frameDelta || 0) / 18, 1);
+  const strength = Math.max(deltaStrength, frameStrength);
+  const compareTint = [
+    0.95 + 0.05 * strength,
+    0.48 - 0.22 * strength,
+    0.18 - 0.08 * strength,
+  ];
+  const primaryTrailFrames = state.overlayHistory.primary.slice(0, -1).slice(-9);
+  const compareTrailFrames = state.overlayHistory.compare.slice(0, -1).slice(-9);
+  const primaryTrailLayers = primaryTrailFrames.map((frameIndex, index) => {
+    const age = primaryTrailFrames.length - index;
+    return {
+      frameIndex,
+      alpha: 0.025 + (index / Math.max(primaryTrailFrames.length, 1)) * 0.055,
+      tintMix: 1,
+      tint: [0.52, 0.58, 0.68],
+      offset: [-overlayOffset * (1 + age * 0.08), 0, 0],
+      depthTest: false,
+    };
+  });
+  const compareTrailLayers = compareTrailFrames.map((frameIndex, index) => {
+    const age = compareTrailFrames.length - index;
+    return {
+      frameIndex,
+      alpha: 0.04 + (index / Math.max(compareTrailFrames.length, 1)) * 0.1,
+      tintMix: 1,
+      tint: [0.95, 0.32, 0.12],
+      offset: [overlayOffset * (1 + age * 0.16), 0, 0],
+      scale: 1 + strength * 0.01 * age,
+      depthTest: false,
+    };
+  });
+
+  return [
+    ...primaryTrailLayers,
+    {
+      frameIndex: primary.frameIndex,
+      alpha: 0.34,
+      tintMix: 1,
+      tint: [0.58, 0.6, 0.64],
+      offset: [-overlayOffset, 0, 0],
+      depthTest: false,
+    },
+    ...compareTrailLayers,
+    {
+      frameIndex: compare.frameIndex,
+      alpha: 0.28 + strength * 0.42,
+      tintMix: 1,
+      tint: compareTint,
+      offset: [overlayOffset, 0, 0],
+      scale: 1 + strength * 0.035,
+      depthTest: false,
+    },
+  ];
 }
 
 function updateUi(runtime) {
@@ -540,34 +731,16 @@ function updateUi(runtime) {
 
   drawWaveform(primary.waveform || [], compare.waveform || []);
   drawPitch(primary.pitchContour || [], compare.pitchContour || []);
-  const overlayOffset = (state.meshMeta?.bounds?.scale || 80) * 0.0000035;
 
-  state.renderers.single?.setLayers([{ frameIndex: primary.frameIndex, alpha: 1, tintMix: 0, tint: [1, 1, 1] }]);
-  state.renderers.splitPrimary?.setLayers([{ frameIndex: primary.frameIndex, alpha: 1, tintMix: 0, tint: [1, 1, 1] }]);
+  state.renderers.single?.setLayers([{ frameIndex: primary.frameIndex, alpha: 0.5, tintMix: 0, tint: [1, 1, 1] }]);
+  state.renderers.splitPrimary?.setLayers([{ frameIndex: primary.frameIndex, alpha: 0.5, tintMix: 0, tint: [1, 1, 1] }]);
   state.renderers.splitCompare?.setLayers([{
     frameIndex: compare.frameIndex,
-    alpha: 1,
-    tintMix: comparison.active ? 0.9 : 0.25,
-    tint: [0.82, 0.84, 0.88],
+    alpha: 0.5,
+    tintMix: 0,
+    tint: [1, 1, 1],
   }]);
-  state.renderers.overlay?.setLayers([
-    {
-      frameIndex: primary.frameIndex,
-      alpha: 0.38,
-      tintMix: 1,
-      tint: [0.62, 0.62, 0.62],
-      offset: [-overlayOffset, 0, 0],
-      depthTest: false,
-    },
-    {
-      frameIndex: compare.frameIndex,
-      alpha: comparison.active ? 0.52 : 0,
-      tintMix: 1,
-      tint: [0.82, 0.84, 0.88],
-      offset: [overlayOffset, 0, 0],
-      depthTest: false,
-    },
-  ]);
+  state.renderers.overlay?.setLayers(buildDifferenceOverlayLayers(primary, compare, comparison));
 }
 
 async function loadRenderers() {
@@ -585,7 +758,7 @@ async function loadRenderers() {
   state.renderers.splitCompare = new MeshRenderer(els.glCompareCanvas, meta, positions, colors, normals);
   state.renderers.overlay = new MeshRenderer(els.glOverlayCanvas, meta, positions, colors, normals);
   Object.values(state.renderers).forEach((renderer) => {
-    renderer.setLayers([{ frameIndex: neutral, alpha: 1, tintMix: 0, tint: [1, 1, 1] }]);
+    renderer.setLayers([{ frameIndex: neutral, alpha: 0.5, tintMix: 0, tint: [1, 1, 1] }]);
   });
 }
 
@@ -611,6 +784,8 @@ function connectEvents() {
 }
 
 async function startMic() {
+  stopBrowserAudio("primary");
+  resetOverlayHistory();
   const device = Number(els.micSelect.value);
   await fetchJson("/api/start-mic", {
     method: "POST",
@@ -621,6 +796,12 @@ async function startMic() {
 }
 
 async function stopTrack(track = null) {
+  stopBrowserAudio(track);
+  if (track === null) {
+    resetOverlayHistory();
+  } else if (state.overlayHistory[track]) {
+    state.overlayHistory[track] = [];
+  }
   await fetchJson("/api/stop", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -629,23 +810,19 @@ async function stopTrack(track = null) {
   await refreshState();
 }
 
-async function startTrackFile(track, path) {
+async function startTrackFile(track, path, options = {}) {
   if (!path) return;
+  if (state.overlayHistory[track]) {
+    state.overlayHistory[track] = [];
+  }
   await fetchJson("/api/start-file", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ track, path }),
   });
-  await refreshState();
-}
-
-async function startTrackUrl(track, url) {
-  if (!url) return;
-  await fetchJson("/api/start-url", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ track, url }),
-  });
+  if (options.playAudio) {
+    await playBrowserAudio(track, path);
+  }
   await refreshState();
 }
 
@@ -655,15 +832,19 @@ async function uploadFile(file, track) {
     headers: { "Content-Type": file.type || "application/octet-stream", "X-Filename": file.name },
     body: file,
   });
-  await startTrackFile(track, response.path);
+  const select = track === "compare" ? els.compareSampleSelect : els.sampleSelect;
+  addMediaOption(select, response.path, `Uploaded: ${file.name}`);
+  els.statusLabel.textContent = `${file.name} uploaded. Click ${track === "compare" ? "Play Compare" : "Play Sample"} to start.`;
 }
 
 function bindControls() {
   els.startMicBtn.addEventListener("click", startMic);
-  els.playSampleBtn.addEventListener("click", () => startTrackFile("primary", els.sampleSelect.value));
-  els.playCompareSampleBtn.addEventListener("click", () => startTrackFile("compare", els.compareSampleSelect.value));
-  els.playCompareUrlBtn.addEventListener("click", () => startTrackUrl("compare", els.compareUrlInput.value.trim()));
-  els.transportPlayBtn.addEventListener("click", () => startTrackFile("primary", els.sampleSelect.value));
+  els.playSampleBtn.addEventListener("click", () => startTrackFile("primary", els.sampleSelect.value, { playAudio: true }));
+  els.playCompareSampleBtn.addEventListener("click", () => startTrackFile("compare", els.compareSampleSelect.value, { playAudio: true }));
+  els.transportPlayBtn.addEventListener("click", () => startTrackFile("primary", els.sampleSelect.value, { playAudio: true }));
+  els.mutePrimaryBtn.addEventListener("click", () => toggleTrackMute("primary"));
+  els.muteCompareBtn.addEventListener("click", () => toggleTrackMute("compare"));
+  els.muteBothBtn.addEventListener("click", toggleBothMute);
   [els.stopBtn, els.stopBtnTop, els.transportStopBtn].forEach((button) => {
     button.addEventListener("click", () => stopTrack(null));
   });
@@ -675,8 +856,9 @@ function bindControls() {
   };
   els.resetViewBtn.addEventListener("click", () => applyToAllRenderers("setPreset", "front"));
   els.frontViewBtn.addEventListener("click", () => applyToAllRenderers("setPreset", "front"));
+  els.backViewBtn.addEventListener("click", () => applyToAllRenderers("setPreset", "back"));
   els.sideViewBtn.addEventListener("click", () => applyToAllRenderers("setPreset", "side"));
-  els.tiltViewBtn.addEventListener("click", () => applyToAllRenderers("setPreset", "tilt"));
+  els.topViewBtn.addEventListener("click", () => applyToAllRenderers("setPreset", "top"));
   els.zoomInBtn.addEventListener("click", () => applyToAllRenderers("zoomBy", 0.85));
   els.zoomOutBtn.addEventListener("click", () => applyToAllRenderers("zoomBy", 1.15));
   els.modeButtons.forEach((button) => {
@@ -711,10 +893,21 @@ async function init() {
     .map((sample) => `<option value="${sample.path}">${sample.label}</option>`)
     .join("");
   els.sampleSelect.innerHTML = sampleOptions;
-  els.compareSampleSelect.innerHTML = sampleOptions;
+  els.compareSampleSelect.innerHTML = `<option value="">Upload a compare file first</option>`;
+  Object.entries(state.audioPlayers).forEach(([track, audio]) => {
+    audio.addEventListener("ended", () => {
+      state.audioActive[track] = false;
+      updateMuteButton();
+    });
+    audio.addEventListener("error", () => {
+      state.audioActive[track] = false;
+      updateMuteButton();
+    });
+  });
 
   await loadRenderers();
   bindControls();
+  updateMuteButton();
   setViewMode("single");
   await refreshState();
   connectEvents();

@@ -43,5 +43,6 @@ python webapp/server.py --host 127.0.0.1 --port 8765 --ckpt main/checkpoints/dif
 ## Notes
 
 - The first launch creates cached mesh assets in `webapp/generated/`.
+- Microphone sessions are saved as local WAV files in `webapp/generated/recordings/`.
 - The UI auto-discovers a few bundled sample audio files when available.
 - If microphone capture fails on Linux, install PortAudio development/runtime packages.

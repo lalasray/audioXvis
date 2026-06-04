@@ -16,3 +16,4 @@ dependencies:
       - trimesh==4.11.3
       - meshio==5.3.5
       - pyassimp==5.2.5
+      - sounddevice

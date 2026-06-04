@@ -177,11 +177,18 @@ input[type="url"] {
 
 button,
 .upload-btn {
+  align-items: center;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   color: var(--text);
   cursor: pointer;
+  justify-content: center;
+  text-align: center;
   transition: transform 140ms ease, filter 140ms ease, border-color 140ms ease;
+}
+
+button {
+  display: flex;
 }
 
 button:hover,
@@ -213,8 +220,13 @@ button:hover,
 
 .play-btn,
 .upload-btn {
+  display: flex;
   flex: 1;
   background: linear-gradient(180deg, #4d6558, #25382e);
+}
+
+.upload-btn {
+  margin-bottom: 0;
 }
 
 .compare-btn,
@@ -427,9 +439,26 @@ button:hover,
 }
 
 .square {
-  width: 62px;
-  min-width: 62px;
+  width: 78px;
+  min-width: 78px;
   padding: 0;
+}
+
+.audio-mute-btn {
+  flex: 0 0 auto;
+  min-height: 56px;
+  min-width: 132px;
+  padding: 0 18px;
+  font-size: 15px;
+}
+
+.audio-mute-btn[hidden] {
+  display: none;
+}
+
+.audio-mute-btn.muted {
+  background: linear-gradient(180deg, #7a4a48, #4a2725);
+  border-color: rgba(223, 71, 55, 0.36);
 }
 
 .progress-wrap {

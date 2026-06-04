@@ -16,7 +16,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import argparse
 
 
@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 GENERATED_DIR = Path(__file__).resolve().parent / "generated"
 UPLOAD_DIR = GENERATED_DIR / "uploads"
+RECORDING_DIR = GENERATED_DIR / "recordings"
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/audio2vis-mpl")
 MESH_GLOB = str(REPO_ROOT / "main" / "_fbx_baked" / "fbx_frame_*.obj")
 DEFAULT_MTL_OBJ = str(REPO_ROOT / "main" / "_fbx_baked" / "fbx_frame_0000.obj")
@@ -31,8 +32,8 @@ HOST = "127.0.0.1"
 PORT = 8765
 SR_MIC = 44100
 PITCH_SR = 11025
-WINDOW_SEC = 0.5
-HOP_SEC = 0.25
+WINDOW_SEC = 0.1
+HOP_SEC = 0.03
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"}
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
 MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
@@ -242,6 +243,9 @@ class TrackSession:
     audio_stream: sd.InputStream | None = None
     stream_thread: threading.Thread | None = None
     audio_buffer: np.ndarray = field(default_factory=lambda: np.zeros(int(WINDOW_SEC * SR_MIC), dtype=np.float32))
+    recording_queue: queue.Queue[np.ndarray | None] = field(default_factory=lambda: queue.Queue(maxsize=256))
+    recording_thread: threading.Thread | None = None
+    recording_path: Path | None = None
     run_token: int = 0
 
 
@@ -322,6 +326,19 @@ class Audio2VisService:
             "windowSec": WINDOW_SEC,
             "hopSec": HOP_SEC,
         }
+
+    def resolve_servable_media(self, raw_path: str) -> Path:
+        if not raw_path:
+            raise FileNotFoundError("No media path provided.")
+        path = Path(raw_path).resolve()
+        allowed_roots = [REPO_ROOT.resolve(), UPLOAD_DIR.resolve(), RECORDING_DIR.resolve()]
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(f"Media file not found: {path}")
+        if path.suffix.lower() not in MEDIA_EXTENSIONS:
+            raise ValueError(f"Unsupported media type: {path.suffix}")
+        if not any(path == root or root in path.parents for root in allowed_roots):
+            raise PermissionError(f"Media path is outside allowed roots: {path}")
+        return path
 
     def _track_state_dict(self, track_key: str) -> dict[str, Any]:
         track = self._get_track(track_key)
@@ -472,12 +489,43 @@ class Audio2VisService:
                 raise RuntimeError(f"Audio decode produced no samples for {audio_path.name}") from exc
             return audio_np, SR_MIC
 
+    def _make_recording_path(self, track_key: str) -> Path:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        safe_track = re.sub(r"[^A-Za-z0-9._-]+", "_", track_key)
+        RECORDING_DIR.mkdir(parents=True, exist_ok=True)
+        return RECORDING_DIR / f"{safe_track}_mic_{timestamp}.wav"
+
+    def _write_microphone_recording(self, track_key: str, recording_path: Path, token: int) -> None:
+        track = self._get_track(track_key)
+        try:
+            with wave.open(str(recording_path), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(SR_MIC)
+                while True:
+                    chunk = track.recording_queue.get()
+                    try:
+                        if chunk is None:
+                            return
+                        pcm = (np.clip(chunk, -1.0, 1.0) * 32767.0).astype("<i2", copy=False)
+                        handle.writeframes(pcm.tobytes())
+                    finally:
+                        track.recording_queue.task_done()
+        except Exception as exc:
+            if token == track.run_token:
+                self._set_state(track_key, error=f"Recording save failed: {exc}")
+
     def _make_audio_callback(self, track_key: str):
         def audio_callback(indata, frames, _time_info, status):
             track = self._get_track(track_key)
             if status:
                 self._set_state(track_key, status=f"Mic warning: {status}")
             mono = indata[:, 0].astype(np.float32)
+            if track.recording_thread is not None:
+                try:
+                    track.recording_queue.put(mono.copy(), block=False)
+                except queue.Full:
+                    pass
             track.audio_buffer = np.roll(track.audio_buffer, -frames)
             track.audio_buffer[-frames:] = mono
             self._set_state(track_key, waveform=self._downsample_waveform(track.audio_buffer))
@@ -488,7 +536,7 @@ class Audio2VisService:
 
         return audio_callback
 
-    def start_microphone(self, track_key: str, device_id: int | None) -> None:
+    def start_microphone(self, track_key: str, device_id: int | None) -> Path:
         if sd is None:
             raise RuntimeError("Microphone capture needs sounddevice. Upload audio or video, or install sounddevice for live input.")
         track = self._get_track(track_key)
@@ -496,26 +544,48 @@ class Audio2VisService:
         track.run_token += 1
         track.stop_event = threading.Event()
         track.audio_buffer = np.zeros(self.window_samples, dtype=np.float32)
-        stream = sd.InputStream(
-            device=device_id,
-            channels=1,
-            samplerate=SR_MIC,
-            blocksize=self.hop_samples,
-            callback=self._make_audio_callback(track_key),
+        recording_path = self._make_recording_path(track_key)
+        track.recording_path = recording_path
+        track.recording_queue = queue.Queue(maxsize=256)
+        token = track.run_token
+        track.recording_thread = threading.Thread(
+            target=self._write_microphone_recording,
+            args=(track_key, recording_path, token),
+            daemon=True,
         )
-        stream.start()
+        track.recording_thread.start()
+        try:
+            stream = sd.InputStream(
+                device=device_id,
+                channels=1,
+                samplerate=SR_MIC,
+                blocksize=self.hop_samples,
+                callback=self._make_audio_callback(track_key),
+            )
+            stream.start()
+        except Exception:
+            try:
+                track.recording_queue.put(None, timeout=1.0)
+                track.recording_thread.join(timeout=3.0)
+            except Exception:
+                pass
+            track.recording_thread = None
+            track.recording_path = None
+            raise
         track.audio_stream = stream
         device_name = next((d["name"] for d in self.get_audio_devices() if d["id"] == device_id), "Microphone")
         self._set_state(
             track_key,
             mode="mic",
-            status="Listening to live microphone",
+            status=f"Listening to live microphone; saving {recording_path.name}",
             source_label=device_name,
             progress=0.0,
             elapsed_sec=0.0,
             duration_sec=0.0,
             error=None,
         )
+        print(f"Saving microphone recording to {recording_path}")
+        return recording_path
 
     def start_audio_file(self, track_key: str, audio_path: str) -> None:
         track = self._get_track(track_key)
@@ -611,6 +681,22 @@ class Audio2VisService:
             except Exception:
                 pass
             track.audio_stream = None
+        if track.recording_thread is not None:
+            try:
+                while True:
+                    try:
+                        track.recording_queue.put(None, timeout=0.2)
+                        break
+                    except queue.Full:
+                        try:
+                            track.recording_queue.get_nowait()
+                            track.recording_queue.task_done()
+                        except queue.Empty:
+                            pass
+                track.recording_thread.join(timeout=3.0)
+            except Exception:
+                pass
+            track.recording_thread = None
         track.stream_thread = None
         track.audio_buffer = np.zeros(self.window_samples, dtype=np.float32)
         neutral = float(self.mesh_cache.meta["sequence"]["neutralFrame"])
@@ -686,8 +772,8 @@ class Audio2VisService:
             pitch = 0.5
 
         voiced = float(np.clip(confidence * 1.7, 0.0, 1.0))
-        a = 38.0 + 47.0 * loudness + 7.0 * (pitch - 0.5)
-        c = 38.0 + 35.0 * pitch * voiced + 12.0 * loudness
+        a = 38.0 + 50.0 * loudness + 7.0 * (pitch - 0.5)
+        c = 38.0 + 40.0 * pitch * voiced + 12.0 * loudness
         if voiced < 0.25:
             c = 50.0 + 10.0 * loudness
 
@@ -747,6 +833,14 @@ class AppHandler(BaseHTTPRequestHandler):
             return self._send_json(self.service.get_state())
         if path == "/api/events":
             return self._send_events()
+        if path == "/api/media":
+            params = parse_qs(parsed.query)
+            media_path = params.get("path", [""])[0]
+            try:
+                return self._serve_media(self.service.resolve_servable_media(media_path))
+            except Exception as exc:
+                self.send_error(HTTPStatus.NOT_FOUND, str(exc))
+                return
         if path == "/mesh/meta":
             return self._send_json(self.service.mesh_cache.meta)
         if path == "/mesh/positions.bin":
@@ -762,8 +856,8 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/start-mic":
                 payload = self._read_json()
-                self.service.start_microphone(payload.get("track", "primary"), payload.get("device"))
-                return self._send_json({"ok": True, "state": self.service.get_state()})
+                path = self.service.start_microphone(payload.get("track", "primary"), payload.get("device"))
+                return self._send_json({"ok": True, "recordingPath": str(path), "state": self.service.get_state()})
             if parsed.path == "/api/start-file":
                 payload = self._read_json()
                 self.service.start_audio_file(payload.get("track", "primary"), payload["path"])
@@ -847,6 +941,50 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _serve_media(self, path: Path) -> None:
+        resolved = path.resolve()
+        content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
+        file_size = resolved.stat().st_size
+        range_header = self.headers.get("Range")
+        start = 0
+        end = file_size - 1
+        status = HTTPStatus.OK
+
+        if range_header:
+            match = re.match(r"bytes=(\d*)-(\d*)$", range_header.strip())
+            if not match:
+                self.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                return
+            raw_start, raw_end = match.groups()
+            if raw_start:
+                start = int(raw_start)
+                end = int(raw_end) if raw_end else end
+            elif raw_end:
+                suffix_len = int(raw_end)
+                start = max(file_size - suffix_len, 0)
+            if start > end or start >= file_size:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{file_size}")
+                self.end_headers()
+                return
+            end = min(end, file_size - 1)
+            status = HTTPStatus.PARTIAL_CONTENT
+
+        content_length = end - start + 1
+        with resolved.open("rb") as handle:
+            handle.seek(start)
+            raw = handle.read(content_length)
+
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(content_length))
+        if status == HTTPStatus.PARTIAL_CONTENT:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(raw)
